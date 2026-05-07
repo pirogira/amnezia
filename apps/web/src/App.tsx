@@ -530,29 +530,39 @@ function ClientForm(props: {
   const [dns, setDns] = useState("1.1.1.1");
   const [junkCount, setJunkCount] = useState<number | "">("");
   const [expires, setExpires] = useState("");
+  const [clientErr, setClientErr] = useState<string | null>(null);
+  const [clientBusy, setClientBusy] = useState(false);
 
   return (
     <form
       className="row"
       onSubmit={async (e) => {
         e.preventDefault();
-        const security: Record<string, unknown> = {};
-        if (dns) security.dns = dns;
-        if (junkCount !== "") security.junkPacketCount = Number(junkCount);
-        const r = await api<{ clientConf: string; id: string; assignedIp: string }>(
-          `/api/servers/${props.server.id}/clients`,
-          {
-            method: "POST",
-            json: {
-              name,
-              protocol,
-              listenPort,
-              security,
-              expiresAt: expires || null,
+        setClientErr(null);
+        setClientBusy(true);
+        try {
+          const security: Record<string, unknown> = {};
+          if (dns) security.dns = dns;
+          if (junkCount !== "") security.junkPacketCount = Number(junkCount);
+          const r = await api<{ clientConf: string; id: string; assignedIp: string }>(
+            `/api/servers/${props.server.id}/clients`,
+            {
+              method: "POST",
+              json: {
+                name,
+                protocol,
+                listenPort,
+                security,
+                expiresAt: expires || null,
+              },
             },
-          },
-        );
-        await props.onCreated(r.clientConf);
+          );
+          await props.onCreated(r.clientConf);
+        } catch (err) {
+          setClientErr(err instanceof Error ? err.message : String(err));
+        } finally {
+          setClientBusy(false);
+        }
       }}
     >
       <div className="field">
@@ -593,9 +603,10 @@ function ClientForm(props: {
         <label>Истекает (ISO)</label>
         <input value={expires} onChange={(e) => setExpires(e.target.value)} placeholder="2027-01-01T00:00:00.000Z" />
       </div>
-      <button className="btn primary" type="submit">
-        Выдать клиента
+      <button className="btn primary" type="submit" disabled={clientBusy}>
+        {clientBusy ? "Создание…" : "Выдать клиента"}
       </button>
+      {clientErr && <p className="error" style={{ width: "100%", margin: "0.5rem 0 0" }}>{clientErr}</p>}
       <p className="muted" style={{ width: "100%", margin: "0.75rem 0 0", fontSize: "0.85rem" }}>
         У WireGuard / AmneziaWG нет отдельного «логина и пароля» как у сайта: доступ — через файл .conf и QR ниже
         (ключи внутри конфига).
