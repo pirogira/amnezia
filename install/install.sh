@@ -149,10 +149,12 @@ from pathlib import Path
 def esc_line(key: str, val: str) -> str:
     if val == "":
         return f'{key}='
-    if any(c in val for c in ' \t\n\r#"\'\\'):
-        v = val.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+    # Docker Compose подставляет $ из .env — литеральный $ задаётся как $$
+    v0 = val.replace("$", "$$")
+    if any(c in v0 for c in ' \t\n\r#"\'\\') or "$" in val:
+        v = v0.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
         return f'{key}="{v}"'
-    return f"{key}={val}"
+    return f"{key}={v0}"
 
 p = Path(os.environ["_ENV_OUT"])
 lines = [
@@ -167,6 +169,8 @@ lines = [
     esc_line("PANEL_CORS_ORIGIN", os.environ["_ORIGIN"]),
     esc_line("TRUST_PROXY", "true"),
     esc_line("ALLOW_REGISTER", "false"),
+    # Один раз после установки синхронизирует хэш с .env (удалите строку после успешного входа)
+    esc_line("PANEL_BOOTSTRAP_UPDATE_PASSWORD", "true"),
 ]
 p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
@@ -210,9 +214,13 @@ echo " Готово"
 echo "================================================================"
 echo " Ссылка на панель: ${PUBLIC_ORIGIN}/"
 echo " Логин:             ${PANEL_USER}"
-echo " Пароль:            (тот, что вы ввели при установке)"
+echo " Пароль:            ${PANEL_PASS1}"
 echo " Копия данных:      ${CREDS_FILE}"
 echo "================================================================"
+echo
+echo "Важно: порт ${PANEL_PORT} — это веб-панель (Caddy). Не путайте с 5173: 5173 только для npm run dev на ПК."
+echo "В infra/.env добавлено PANEL_BOOTSTRAP_UPDATE_PASSWORD=true — после первого успешного входа удалите эту строку и выполните:"
+echo "  cd ${INFRA} && docker compose --env-file .env up -d"
 echo
 if [[ "$USE_TLS" -eq 1 ]]; then
   echo "Самоподписанный сертификат: в браузере откройте «Дополнительно» и перейдите на сайт."

@@ -7,10 +7,9 @@ export function ensureBootstrapAdmin(): void {
   const db = getDb();
   const n = db.prepare(`SELECT COUNT(*) as c FROM admins`).get() as { c: number };
 
+  /** Явный сброс пароля админа из .env (и после install.sh). В production — только по флагу; уберите из .env после входа. */
   const syncPwd =
-    process.env.PANEL_BOOTSTRAP_UPDATE_PASSWORD === "true" &&
-    process.env.NODE_ENV !== "production" &&
-    Boolean(config.bootstrapPassword);
+    process.env.PANEL_BOOTSTRAP_UPDATE_PASSWORD === "true" && Boolean(config.bootstrapPassword);
 
   if (n.c > 0) {
     if (syncPwd) {
