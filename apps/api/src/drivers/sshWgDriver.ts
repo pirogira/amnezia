@@ -8,7 +8,7 @@ import {
   dockerExecWgSetPeer,
   dockerExecWgShowDump,
   dockerExecWgShowPublicKey,
-  dockerResolveWgCli,
+  dockerResolveWgExe,
   dockerResolveWgIface,
 } from "../ssh/client.js";
 import { buildSshAuthFromServer } from "../ssh/buildAuth.js";
@@ -30,23 +30,23 @@ export const sshWgDriver: VpnDriver = {
     if (!ok) throw new Error(`docker container not found: ${server.docker_wg_container}`);
 
     const iface = await dockerResolveWgIface(auth, server.docker_wg_container, server.wg_interface);
-    const cli = await dockerResolveWgCli(auth, server.docker_wg_container, iface);
+    const wgExe = await dockerResolveWgExe(auth, server.docker_wg_container, iface);
 
-    const clientPriv = await dockerExecWgGenkey(auth, server.docker_wg_container, cli);
-    const clientPub = await dockerExecWgPubkey(auth, server.docker_wg_container, clientPriv, cli);
-    const serverPub = await dockerExecWgShowPublicKey(auth, server.docker_wg_container, iface, cli);
+    const clientPriv = await dockerExecWgGenkey(auth, server.docker_wg_container, wgExe);
+    const clientPub = await dockerExecWgPubkey(auth, server.docker_wg_container, clientPriv, wgExe);
+    const serverPub = await dockerExecWgShowPublicKey(auth, server.docker_wg_container, iface, wgExe);
 
     const { prefix } = parseSubnetLastOctets(server.vpn_subnet_cidr);
     const assignedIp = hostIpFromOctet(prefix, nextIpOctet);
     const allowed = `${assignedIp}/32`;
 
     /** AmneziaWG / многие инсталляции ждут PSK в .conf; без него клиент импортируется, но туннель не поднимается. */
-    const psk = await dockerExecWgGenpsk(auth, server.docker_wg_container, cli);
-    await dockerExecWgSetPeer(auth, server.docker_wg_container, iface, clientPub, allowed, psk, cli);
+    const psk = await dockerExecWgGenpsk(auth, server.docker_wg_container, wgExe);
+    await dockerExecWgSetPeer(auth, server.docker_wg_container, iface, clientPub, allowed, psk, wgExe);
 
     let awgNative: Record<string, string> | undefined;
     if (body.protocol === "amneziawg") {
-      const dump = await dockerExecWgShowDump(auth, server.docker_wg_container, iface, cli);
+      const dump = await dockerExecWgShowDump(auth, server.docker_wg_container, iface, wgExe);
       const parsed = parseAwgParamsFromWgShow(dump);
       if (Object.keys(parsed).length > 0) awgNative = parsed;
     }
@@ -72,7 +72,7 @@ export const sshWgDriver: VpnDriver = {
   async revokeClient(server, publicKey, _decryptSshKey) {
     const auth = buildSshAuthFromServer(server);
     const iface = await dockerResolveWgIface(auth, server.docker_wg_container, server.wg_interface);
-    const cli = await dockerResolveWgCli(auth, server.docker_wg_container, iface);
-    await dockerExecWgRemovePeer(auth, server.docker_wg_container, iface, publicKey, cli);
+    const wgExe = await dockerResolveWgExe(auth, server.docker_wg_container, iface);
+    await dockerExecWgRemovePeer(auth, server.docker_wg_container, iface, publicKey, wgExe);
   },
 };
