@@ -20,8 +20,8 @@ export const config = {
     process.env.NODE_ENV === "production"
       ? (process.env.PANEL_CORS_ORIGIN ?? true)
       : true,
-  bootstrapUsername: process.env.PANEL_BOOTSTRAP_USERNAME ?? "admin",
-  bootstrapPassword: process.env.PANEL_BOOTSTRAP_PASSWORD ?? "",
+  bootstrapUsername: (process.env.PANEL_BOOTSTRAP_USERNAME ?? "admin").trim(),
+  bootstrapPassword: (process.env.PANEL_BOOTSTRAP_PASSWORD ?? "").trim(),
   allowRegister: process.env.ALLOW_REGISTER === "true",
   trustProxy: process.env.TRUST_PROXY === "true",
 };

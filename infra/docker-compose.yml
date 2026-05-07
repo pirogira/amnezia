@@ -12,6 +12,8 @@ services:
       PANEL_CORS_ORIGIN: ${PANEL_CORS_ORIGIN:?set PANEL_CORS_ORIGIN}
       PANEL_BOOTSTRAP_USERNAME: ${PANEL_BOOTSTRAP_USERNAME:-admin}
       PANEL_BOOTSTRAP_PASSWORD: ${PANEL_BOOTSTRAP_PASSWORD:?set PANEL_BOOTSTRAP_PASSWORD}
+      # Иначе флаг из infra/.env не попадает в контейнер — сброс пароля не срабатывает.
+      PANEL_BOOTSTRAP_UPDATE_PASSWORD: ${PANEL_BOOTSTRAP_UPDATE_PASSWORD:-false}
       TRUST_PROXY: ${TRUST_PROXY:-true}
       ALLOW_REGISTER: ${ALLOW_REGISTER:-false}
     volumes:
