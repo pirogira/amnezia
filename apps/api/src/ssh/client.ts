@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Client, type ClientChannel } from "ssh2";
 
 export type SshAuth = {
@@ -223,11 +224,20 @@ export async function dockerExecWgSetPeer(
   if (presharedKey !== undefined && !/^[A-Za-z0-9+/=]+$/.test(presharedKey)) {
     throw new Error("invalid preshared key");
   }
-  const pskTail =
-    presharedKey !== undefined && presharedKey.length > 0
-      ? ` preshared-key ${shellQuote(presharedKey)}`
-      : "";
-  const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} set ${shellQuote(iface)} peer ${shellQuote(clientPub)} allowed-ips ${shellQuote(allowedIps)}${pskTail}`;
+
+  /** `wg`/`awg` ожидают у `preshared-key` путь к файлу с base64, не сам ключ — иначе fopen на «имени файла». */
+  if (presharedKey !== undefined && presharedKey.length > 0) {
+    const tmpBase = `panel-wpsk-${randomBytes(16).toString("hex")}`;
+    if (!/^panel-wpsk-[a-f0-9]{32}$/.test(tmpBase)) throw new Error("internal tmp name");
+    const tmpPath = `/tmp/${tmpBase}`;
+    const script = `umask 077; cat >${shellQuote(tmpPath)} && ${shellQuote(exe)} set ${shellQuote(iface)} peer ${shellQuote(clientPub)} allowed-ips ${shellQuote(allowedIps)} preshared-key ${shellQuote(tmpPath)}; e=$?; rm -f ${shellQuote(tmpPath)}; exit $e`;
+    const cmd = `docker exec -i ${shellQuote(container)} sh -c ${shellQuote(script)}`;
+    const r = await execRemote(auth, cmd, `${presharedKey}\n`);
+    if (r.code !== 0) throw new Error(`${exe} set peer failed: ${r.stderr || r.stdout}`);
+    return;
+  }
+
+  const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} set ${shellQuote(iface)} peer ${shellQuote(clientPub)} allowed-ips ${shellQuote(allowedIps)}`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0) throw new Error(`${exe} set peer failed: ${r.stderr || r.stdout}`);
 }
