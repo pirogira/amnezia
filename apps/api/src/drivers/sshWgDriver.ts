@@ -6,6 +6,7 @@ import {
   dockerExecWgRemovePeer,
   dockerExecWgSetPeer,
   dockerExecWgShowPublicKey,
+  dockerResolveWgIface,
 } from "../ssh/client.js";
 import { buildSshAuthFromServer } from "../ssh/buildAuth.js";
 import { buildClientConf, hostIpFromOctet, parseSubnetLastOctets } from "../wgConf.js";
@@ -20,25 +21,17 @@ export const sshWgDriver: VpnDriver = {
     const ok = await dockerContainerExists(auth, server.docker_wg_container);
     if (!ok) throw new Error(`docker container not found: ${server.docker_wg_container}`);
 
+    const iface = await dockerResolveWgIface(auth, server.docker_wg_container, server.wg_interface);
+
     const clientPriv = await dockerExecWgGenkey(auth, server.docker_wg_container);
     const clientPub = await dockerExecWgPubkey(auth, server.docker_wg_container, clientPriv);
-    const serverPub = await dockerExecWgShowPublicKey(
-      auth,
-      server.docker_wg_container,
-      server.wg_interface,
-    );
+    const serverPub = await dockerExecWgShowPublicKey(auth, server.docker_wg_container, iface);
 
     const { prefix } = parseSubnetLastOctets(server.vpn_subnet_cidr);
     const assignedIp = hostIpFromOctet(prefix, nextIpOctet);
     const allowed = `${assignedIp}/32`;
 
-    await dockerExecWgSetPeer(
-      auth,
-      server.docker_wg_container,
-      server.wg_interface,
-      clientPub,
-      allowed,
-    );
+    await dockerExecWgSetPeer(auth, server.docker_wg_container, iface, clientPub, allowed);
 
     const conf = buildClientConf({
       clientPrivateKey: clientPriv.trim(),
@@ -59,11 +52,7 @@ export const sshWgDriver: VpnDriver = {
 
   async revokeClient(server, publicKey, _decryptSshKey) {
     const auth = buildSshAuthFromServer(server);
-    await dockerExecWgRemovePeer(
-      auth,
-      server.docker_wg_container,
-      server.wg_interface,
-      publicKey,
-    );
+    const iface = await dockerResolveWgIface(auth, server.docker_wg_container, server.wg_interface);
+    await dockerExecWgRemovePeer(auth, server.docker_wg_container, iface, publicKey);
   },
 };

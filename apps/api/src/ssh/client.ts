@@ -93,6 +93,32 @@ export async function dockerExecWgPubkey(
   return r.stdout.trim();
 }
 
+/**
+ * В БД часто wg0, в Amnezia контейнере — только awg0. Берём имя из `wg show` на контейнере.
+ */
+export async function dockerResolveWgIface(auth: SshAuth, container: string, prefer: string): Promise<string> {
+  assertNoShellInjection(container, SAFE_CONTAINER, "container");
+  assertNoShellInjection(prefer, SAFE_IFACE, "iface");
+  const cmd = `docker exec ${shellQuote(container)} wg show`;
+  const r = await execRemote(auth, cmd);
+  if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
+  const names: string[] = [];
+  const re = /^interface:\s*(\S+)/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(r.stdout)) !== null) {
+    names.push(m[1]);
+  }
+  if (names.length === 0) {
+    throw new Error(`wg show: нет interface: в выводе: ${r.stdout.slice(0, 400)}`);
+  }
+  if (names.includes(prefer)) return prefer;
+  const awg = names.find((n) => /^awg\d+$/.test(n));
+  if (awg) return awg;
+  const wg = names.find((n) => /^wg\d+$/.test(n));
+  if (wg) return wg;
+  return names[0];
+}
+
 export async function dockerExecWgShowPublicKey(
   auth: SshAuth,
   container: string,
@@ -100,16 +126,15 @@ export async function dockerExecWgShowPublicKey(
 ): Promise<string> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
-  /** `wg show IFACE public-key` на awg0 (AmneziaWG) часто даёт «Protocol not supported» — парсим полный `wg show`. */
   const cmd = `docker exec ${shellQuote(container)} wg show ${shellQuote(iface)}`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
   const head = r.stdout.split(/\npeer:/i)[0] ?? r.stdout;
-  const m = /public key:\s*([A-Za-z0-9+/=]+)/.exec(head);
-  if (!m) {
+  const pk = /public key:\s*([A-Za-z0-9+/=]+)/.exec(head);
+  if (!pk) {
     throw new Error(`wg show: не найден public key интерфейса: ${r.stdout.slice(0, 400)}`);
   }
-  return m[1].trim();
+  return pk[1].trim();
 }
 
 export async function dockerExecWgSetPeer(
