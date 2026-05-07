@@ -60,6 +60,16 @@ while true; do
   break
 done
 
+# Без этого в .env мог попасть ведущий \\n (после read -s / копипаста) — пароль визуально «123…», а в базе другой.
+strip_edges() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+PANEL_PASS1="$(strip_edges "$PANEL_PASS1")"
+PANEL_USER="$(strip_edges "$PANEL_USER")"
+
 read -r -p "Внешний IP сервера для сертификата и ссылки [авто]: " SERVER_IP
 SERVER_IP="${SERVER_IP:-$(detect_ip)}"
 if [[ -z "$SERVER_IP" ]]; then
@@ -147,6 +157,7 @@ import os
 from pathlib import Path
 
 def esc_line(key: str, val: str) -> str:
+    val = (val or "").strip("\r\n\t ")
     if val == "":
         return f'{key}='
     # Docker Compose подставляет $ из .env — литеральный $ задаётся как $$
