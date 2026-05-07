@@ -1,0 +1,45 @@
+services:
+  panel-api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    environment:
+      NODE_ENV: production
+      PANEL_API_HOST: 0.0.0.0
+      PANEL_DATABASE_PATH: /data/panel.sqlite
+      PANEL_JWT_SECRET: ${PANEL_JWT_SECRET:?set PANEL_JWT_SECRET}
+      PANEL_ENCRYPTION_KEY: ${PANEL_ENCRYPTION_KEY:?set PANEL_ENCRYPTION_KEY}
+      PANEL_CORS_ORIGIN: ${PANEL_CORS_ORIGIN:?set PANEL_CORS_ORIGIN}
+      PANEL_BOOTSTRAP_USERNAME: ${PANEL_BOOTSTRAP_USERNAME:-admin}
+      PANEL_BOOTSTRAP_PASSWORD: ${PANEL_BOOTSTRAP_PASSWORD:?set PANEL_BOOTSTRAP_PASSWORD}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      ALLOW_REGISTER: ${ALLOW_REGISTER:-false}
+    volumes:
+      - panel_data:/data
+    expose:
+      - "3001"
+
+  panel-web:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+    depends_on:
+      - panel-api
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "${PANEL_PUBLIC_ADDR:-0.0.0.0}:${PANEL_PUBLIC_PORT:-8080}:${PANEL_CADDY_TARGET:-80}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/etc/caddy/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - panel-api
+      - panel-web
+
+volumes:
+  panel_data: {}
+  caddy_data: {}
+  caddy_config: {}

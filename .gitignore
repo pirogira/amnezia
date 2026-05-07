@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.sqlite
+*.sqlite-*
+data/
+.env
+.env.*
+!.env.example
+infra/.env
+panel-credentials.txt
+.DS_Store
+coverage/

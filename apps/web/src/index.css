@@ -1,0 +1,148 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --panel: #161a22;
+  --border: #2a3140;
+  --text: #e8ecf1;
+  --muted: #9aa3b2;
+  --accent: #5b8cff;
+  --danger: #f87171;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.45;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a {
+  color: var(--accent);
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.layout {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 140px;
+}
+
+.field label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.field input,
+.field select,
+.field textarea {
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b0d12;
+  color: var(--text);
+}
+
+.field textarea {
+  min-height: 120px;
+  font-family: ui-monospace, monospace;
+}
+
+.btn {
+  padding: 0.5rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #1f2633;
+  color: var(--text);
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: #3f6fd6;
+  color: #0a0c10;
+  font-weight: 600;
+}
+
+.btn.danger {
+  border-color: #7f1d1d;
+  background: #3f1515;
+  color: #fecaca;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.h1 {
+  font-size: 1.35rem;
+  margin: 0 0 0.5rem;
+}
+
+.h2 {
+  font-size: 1.1rem;
+  margin: 0 0 0.75rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 0.35rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.qr {
+  background: #fff;
+  padding: 0.5rem;
+  border-radius: 8px;
+  display: inline-block;
+}

@@ -1,0 +1,23 @@
+{
+  "name": "amnesia-veb",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @amnesia-veb/shared && npm run build -w @amnesia-veb/api && npm run build -w @amnesia-veb/web",
+    "freeports": "node scripts/freeports.cjs",
+    "db:reset": "node scripts/reset-db.mjs",
+    "predev": "node scripts/freeports.cjs",
+    "dev": "dotenv -e .env -- concurrently -n api,web -c blue,green \"npm run dev -w @amnesia-veb/api\" \"node scripts/wait-api-health.mjs && npm run dev -w @amnesia-veb/web\"",
+    "dev:web": "dotenv -e .env -- npm run dev -w @amnesia-veb/web",
+    "dev:api": "dotenv -e .env -- npm run dev -w @amnesia-veb/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "dotenv-cli": "^7.4.4",
+    "kill-port": "^2.0.1",
+    "typescript": "^5.6.3"
+  }
+}

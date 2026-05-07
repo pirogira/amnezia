@@ -1,0 +1,592 @@
+import { useEffect, useMemo, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
+import type { VpnProtocol } from "@amnesia-veb/shared";
+import { api, getToken, setToken } from "./api.js";
+
+type Me = { id: string; username: string; created_at: string };
+type Server = {
+  id: string;
+  name: string;
+  sshHost: string;
+  sshPort: number;
+  sshUser: string;
+  dockerWgContainer: string;
+  wgInterface: string;
+  vpnSubnetCidr: string;
+  endpointHost: string;
+  listenPort: number;
+  driverMode: string;
+  dockerComposePath: string | null;
+  portChangeHookCmd: string | null;
+};
+type ClientRow = {
+  id: string;
+  name: string;
+  protocol: string;
+  public_key: string;
+  assigned_ip: string;
+  listen_port: number;
+  revoked_at: string | null;
+  created_at: string;
+};
+
+export function App() {
+  const [token, setTok] = useState<string | null>(() => getToken());
+  const [me, setMe] = useState<Me | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [servers, setServers] = useState<Server[]>([]);
+  const [activeServerId, setActiveServerId] = useState<string | null>(null);
+  const [clients, setClients] = useState<ClientRow[]>([]);
+  const [lastConf, setLastConf] = useState<string | null>(null);
+
+  const activeServer = useMemo(
+    () => servers.find((s) => s.id === activeServerId) ?? null,
+    [servers, activeServerId],
+  );
+
+  useEffect(() => {
+    if (!token) {
+      setMe(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const m = await api<Me>("/api/me");
+        if (!cancelled) setMe(m);
+      } catch {
+        if (!cancelled) {
+          setToken(null);
+          setTok(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api<Server[]>("/api/servers");
+        if (!cancelled) {
+          setServers(list);
+          setActiveServerId((prev) =>
+            prev && list.some((s) => s.id === prev) ? prev : (list[0]?.id ?? null),
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (!token || !activeServerId) {
+      setClients([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api<ClientRow[]>(`/api/servers/${activeServerId}/clients`);
+        if (!cancelled) setClients(list);
+      } catch {
+        if (!cancelled) setClients([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeServerId]);
+
+  async function login(username: string, password: string) {
+    setErr(null);
+    const r = await api<{ token: string }>("/api/auth/login", {
+      method: "POST",
+      json: { username, password },
+    });
+    setToken(r.token);
+    setTok(r.token);
+  }
+
+  async function logout() {
+    setToken(null);
+    setTok(null);
+    setMe(null);
+    setServers([]);
+    setClients([]);
+    setLastConf(null);
+  }
+
+  if (!token || !me) {
+    return (
+      <div className="layout">
+        <h1 className="h1">Amnezia panel</h1>
+        <p className="muted">Вход администратора</p>
+        <LoginForm onLogin={login} error={err} setError={setErr} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="layout">
+      <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
+        <div>
+          <h1 className="h1">Amnezia panel</h1>
+          <p className="muted">
+            {me.username} · <button className="btn" type="button" onClick={() => void logout()}>Выйти</button>
+          </p>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="h2">Серверы</h2>
+        <ServerForm
+          onCreated={async () => {
+            const list = await api<Server[]>("/api/servers");
+            setServers(list);
+          }}
+        />
+        <div style={{ marginTop: "0.75rem" }}>
+          <label className="muted">Активный сервер: </label>
+          <select
+            value={activeServerId ?? ""}
+            onChange={(e) => setActiveServerId(e.target.value || null)}
+          >
+            {servers.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} ({s.driverMode})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {activeServer && (
+        <div className="card">
+          <h2 className="h2">Клиенты · {activeServer.name}</h2>
+          <ClientForm
+            server={activeServer}
+            onCreated={async (conf) => {
+              setLastConf(conf);
+              const list = await api<ClientRow[]>(`/api/servers/${activeServer.id}/clients`);
+              setClients(list);
+            }}
+          />
+          {lastConf && (
+            <div style={{ marginTop: "1rem" }}>
+              <p className="muted">Последний созданный конфиг</p>
+              <div className="qr">
+                <QRCodeSVG value={lastConf} size={180} />
+              </div>
+              <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>{lastConf}</pre>
+            </div>
+          )}
+          <table className="table" style={{ marginTop: "1rem" }}>
+            <thead>
+              <tr>
+                <th>Имя</th>
+                <th>Протокол</th>
+                <th>IP</th>
+                <th>Порт</th>
+                <th>Статус</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {clients.map((c) => (
+                <tr key={c.id}>
+                  <td>{c.name}</td>
+                  <td>{c.protocol}</td>
+                  <td>{c.assigned_ip}</td>
+                  <td>{c.listen_port}</td>
+                  <td>{c.revoked_at ? "отозван" : "активен"}</td>
+                  <td>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={async () => {
+                        const text = await api<string>(`/api/clients/${c.id}/wg.conf`);
+                        const blob = new Blob([text], { type: "text/plain" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${c.name}.conf`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
+                      .conf
+                    </button>{" "}
+                    {!c.revoked_at && (
+                      <button
+                        className="btn danger"
+                        type="button"
+                        onClick={async () => {
+                          await api(`/api/clients/${c.id}`, { method: "DELETE" });
+                          const list = await api<ClientRow[]>(
+                            `/api/servers/${activeServer.id}/clients`,
+                          );
+                          setClients(list);
+                        }}
+                      >
+                        Отозвать
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeServer && (
+        <div className="card">
+          <h2 className="h2">Порт и префлайт</h2>
+          <PortForm serverId={activeServer.id} currentPort={activeServer.listenPort} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+type LoginInfo = {
+  defaultUsername: string;
+  hasAdmins: boolean;
+  devPassword: string | null;
+  helpRu: string;
+};
+
+function LoginForm(props: {
+  onLogin: (u: string, p: string) => Promise<void>;
+  error: string | null;
+  setError: (e: string | null) => void;
+}) {
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
+  const [info, setInfo] = useState<LoginInfo | null>(null);
+  const [infoHint, setInfoHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    (async () => {
+      for (let i = 0; i < 50; i++) {
+        if (cancelled) return;
+        try {
+          const j = await api<LoginInfo>("/api/auth/login-info");
+          if (!cancelled) {
+            setInfo(j);
+            setUsername(j.defaultUsername || "admin");
+            if (j.devPassword) setPassword(j.devPassword);
+            setInfoHint(null);
+          }
+          return;
+        } catch {
+          if (i === 0) setInfoHint("Ждём API… обновите страницу, если так висит долго.");
+          await sleep(300);
+        }
+      }
+      if (!cancelled) setInfoHint("Не удалось связаться с API. Убедитесь, что `npm run dev` запущен и порт 3001 свободен.");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <form
+      className="card"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        try {
+          await props.onLogin(username, password);
+        } catch (er) {
+          props.setError(er instanceof Error ? er.message : "Ошибка входа");
+        }
+      }}
+    >
+      {infoHint && !info && <p className="muted">{infoHint}</p>}
+      {info && (
+        <div className="muted" style={{ marginBottom: "1rem", fontSize: "0.88rem" }}>
+          <p style={{ margin: "0 0 0.5rem" }}>{info.helpRu}</p>
+          {!info.hasAdmins && (
+            <p className="error" style={{ margin: 0 }}>
+              В базе ещё нет администратора — задайте PANEL_BOOTSTRAP_PASSWORD в .env и перезапустите API (или npm run
+              db:reset).
+            </p>
+          )}
+          {info.devPassword && (
+            <p style={{ margin: "0.5rem 0 0", color: "#fbbf24" }}>
+              Режим отладки: пароль из .env подставлен в поле ниже (PANEL_SHOW_LOGIN_PASSWORD=true). Отключите в
+              production.
+            </p>
+          )}
+        </div>
+      )}
+      <div className="row">
+        <div className="field">
+          <label>Логин</label>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+        </div>
+        <div className="field">
+          <label>Пароль</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+        </div>
+        <button className="btn primary" type="submit">
+          Войти
+        </button>
+      </div>
+      {props.error && <p className="error">{props.error}</p>}
+    </form>
+  );
+}
+
+function ServerForm(props: { onCreated: () => Promise<void> }) {
+  const [name, setName] = useState("My VPS");
+  const [sshHost, setSshHost] = useState("");
+  const [sshPort, setSshPort] = useState(22);
+  const [sshUser, setSshUser] = useState("root");
+  const [sshKey, setSshKey] = useState("");
+  const [container, setContainer] = useState("amnezia-awg");
+  const [wgInterface, setWgInterface] = useState("wg0");
+  const [cidr, setCidr] = useState("10.8.0.0/24");
+  const [endpoint, setEndpoint] = useState("");
+  const [listenPort, setListenPort] = useState(51820);
+  const [driverMode, setDriverMode] = useState<"ssh" | "mock">("mock");
+  const [composePath, setComposePath] = useState("");
+  const [hook, setHook] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  return (
+    <form
+      className="row"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setMsg(null);
+        await api("/api/servers", {
+          method: "POST",
+          json: {
+            name,
+            sshHost,
+            sshPort,
+            sshUser,
+            sshPrivateKey: sshKey,
+            dockerWgContainer: container,
+            wgInterface,
+            vpnSubnetCidr: cidr,
+            endpointHost: endpoint || sshHost,
+            listenPort,
+            driverMode,
+            dockerComposePath: composePath || null,
+            portChangeHookCmd: hook || null,
+          },
+        });
+        setMsg("Сервер добавлен");
+        await props.onCreated();
+      }}
+    >
+      <div className="field">
+        <label>Имя</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>SSH host</label>
+        <input value={sshHost} onChange={(e) => setSshHost(e.target.value)} required />
+      </div>
+      <div className="field">
+        <label>SSH port</label>
+        <input
+          type="number"
+          value={sshPort}
+          onChange={(e) => setSshPort(Number(e.target.value))}
+        />
+      </div>
+      <div className="field">
+        <label>SSH user</label>
+        <input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
+      </div>
+      <div className="field" style={{ flex: "1 1 240px" }}>
+        <label>SSH private key (PEM)</label>
+        <textarea value={sshKey} onChange={(e) => setSshKey(e.target.value)} required />
+      </div>
+      <div className="field">
+        <label>Docker контейнер WG</label>
+        <input value={container} onChange={(e) => setContainer(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Интерфейс</label>
+        <input value={wgInterface} onChange={(e) => setWgInterface(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>VPN subnet /24</label>
+        <input value={cidr} onChange={(e) => setCidr(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Endpoint host</label>
+        <input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="публичный IP/DNS" />
+      </div>
+      <div className="field">
+        <label>Listen port (клиент)</label>
+        <input
+          type="number"
+          value={listenPort}
+          onChange={(e) => setListenPort(Number(e.target.value))}
+        />
+      </div>
+      <div className="field">
+        <label>Режим драйвера</label>
+        <select value={driverMode} onChange={(e) => setDriverMode(e.target.value as "ssh" | "mock")}>
+          <option value="mock">mock (без SSH)</option>
+          <option value="ssh">ssh (реальный VPS)</option>
+        </select>
+      </div>
+      <div className="field" style={{ flex: "1 1 220px" }}>
+        <label>docker compose path (префлайт)</label>
+        <input
+          value={composePath}
+          onChange={(e) => setComposePath(e.target.value)}
+          placeholder="/opt/amnezia/docker-compose.yml"
+        />
+      </div>
+      <div className="field" style={{ flex: "1 1 220px" }}>
+        <label>Hook смены порта на VPS</label>
+        <input
+          value={hook}
+          onChange={(e) => setHook(e.target.value)}
+          placeholder="/opt/amnesia/set-port.sh"
+        />
+      </div>
+      <button className="btn primary" type="submit">
+        Добавить сервер
+      </button>
+      {msg && <p className="muted">{msg}</p>}
+    </form>
+  );
+}
+
+function ClientForm(props: {
+  server: Server;
+  onCreated: (conf: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("user1");
+  const [protocol, setProtocol] = useState<VpnProtocol>("amneziawg");
+  const [listenPort, setListenPort] = useState(props.server.listenPort);
+  const [dns, setDns] = useState("1.1.1.1");
+  const [junkCount, setJunkCount] = useState<number | "">("");
+  const [expires, setExpires] = useState("");
+
+  return (
+    <form
+      className="row"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const security: Record<string, unknown> = {};
+        if (dns) security.dns = dns;
+        if (junkCount !== "") security.junkPacketCount = Number(junkCount);
+        const r = await api<{ clientConf: string; id: string; assignedIp: string }>(
+          `/api/servers/${props.server.id}/clients`,
+          {
+            method: "POST",
+            json: {
+              name,
+              protocol,
+              listenPort,
+              security,
+              expiresAt: expires || null,
+            },
+          },
+        );
+        await props.onCreated(r.clientConf);
+      }}
+    >
+      <div className="field">
+        <label>Имя клиента</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Протокол</label>
+        <select value={protocol} onChange={(e) => setProtocol(e.target.value as VpnProtocol)}>
+          <option value="amneziawg">AmneziaWG</option>
+          <option value="wireguard">WireGuard</option>
+          <option value="openvpn">OpenVPN (заглушка)</option>
+          <option value="cloak">Cloak (заглушка)</option>
+        </select>
+      </div>
+      <div className="field">
+        <label>Порт в конфиге</label>
+        <input
+          type="number"
+          value={listenPort}
+          onChange={(e) => setListenPort(Number(e.target.value))}
+        />
+      </div>
+      <div className="field">
+        <label>DNS</label>
+        <input value={dns} onChange={(e) => setDns(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>junk_packet_count (AWG)</label>
+        <input
+          type="number"
+          value={junkCount}
+          onChange={(e) => setJunkCount(e.target.value === "" ? "" : Number(e.target.value))}
+          placeholder="опционально"
+        />
+      </div>
+      <div className="field">
+        <label>Истекает (ISO)</label>
+        <input value={expires} onChange={(e) => setExpires(e.target.value)} placeholder="2027-01-01T00:00:00.000Z" />
+      </div>
+      <button className="btn primary" type="submit">
+        Выдать клиента
+      </button>
+      <p className="muted" style={{ width: "100%", margin: "0.75rem 0 0", fontSize: "0.85rem" }}>
+        У WireGuard / AmneziaWG нет отдельного «логина и пароля» как у сайта: доступ — через файл .conf и QR ниже
+        (ключи внутри конфига).
+      </p>
+    </form>
+  );
+}
+
+function PortForm(props: { serverId: string; currentPort: number }) {
+  const [port, setPort] = useState(props.currentPort);
+  const [result, setResult] = useState<string | null>(null);
+  return (
+    <form
+      className="row"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const r = await api<{ status: string; message?: string; port?: number }>(
+          `/api/servers/${props.serverId}/listen-port`,
+          { method: "POST", json: { port } },
+        );
+        setResult(JSON.stringify(r, null, 2));
+      }}
+    >
+      <div className="field">
+        <label>Новый listen port</label>
+        <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+      </div>
+      <button className="btn primary" type="submit">
+        Применить (hook / БД)
+      </button>
+      {result && (
+        <pre style={{ width: "100%", whiteSpace: "pre-wrap", fontSize: "0.8rem" }}>{result}</pre>
+      )}
+    </form>
+  );
+}

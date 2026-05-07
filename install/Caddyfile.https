@@ -1,0 +1,6 @@
+:443 {
+	tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+	encode gzip
+	reverse_proxy /api/* panel-api:3001
+	reverse_proxy panel-web:80
+}

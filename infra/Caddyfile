@@ -1,0 +1,5 @@
+:80 {
+	encode gzip
+	reverse_proxy /api/* panel-api:3001
+	reverse_proxy panel-web:80
+}
