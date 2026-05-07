@@ -1,0 +1,28 @@
+---
+description: После правок кода — git push и команды деплоя на VPS
+alwaysApply: true
+---
+
+# Деплой после изменений
+
+Когда в этом репозитории менялся **прикладной код** (не только чат без правок):
+
+1. **Сразу** закоммитить осмысленным сообщением и выполнить `git push origin main` (или текущую ветку), если у пользователя настроен доступ к `origin`. Не оставлять только локальные коммиты без пуша без явной просьбы пользователя обратного.
+
+2. **В конце ответа** всегда выдать блок команд для сервера (путь по умолчанию: репозиторий на VPS `/opt/amnesia-veb`, compose — `infra`):
+
+```bash
+cd /opt/amnesia-veb && git pull origin main && cd infra
+docker compose build --no-cache panel-api panel-web
+docker compose up -d
+```
+
+Если менялся только API:
+
+```bash
+cd /opt/amnesia-veb && git pull origin main && cd infra
+docker compose build --no-cache panel-api
+docker compose up -d panel-api
+```
+
+Уточнять путь/ветку только если пользователь явно использует другие.
