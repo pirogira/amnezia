@@ -1,13 +1,7 @@
 import { getDb } from "../db.js";
 import { writeAudit } from "../audit.js";
-import { decryptSecret } from "../crypto.js";
-import { getEncryptionMaster } from "../cryptoEnv.js";
-import {
-  dockerComposeConfigQuiet,
-  dockerContainerExists,
-  runPortHook,
-  type SshAuth,
-} from "../ssh/client.js";
+import { dockerComposeConfigQuiet, dockerContainerExists, runPortHook } from "../ssh/client.js";
+import { buildSshAuthFromServer } from "../ssh/buildAuth.js";
 import type { ServerRow } from "../drivers/types.js";
 
 export type PortChangeResult =
@@ -25,13 +19,7 @@ export async function changeServerListenPort(params: {
     return { status: "preflight_failed", reason: "invalid port" };
   }
 
-  const decryptKey = () => decryptSecret(server.ssh_private_key_enc, getEncryptionMaster());
-  const auth: SshAuth = {
-    host: server.ssh_host,
-    port: server.ssh_port,
-    username: server.ssh_user,
-    privateKey: decryptKey(),
-  };
+  const auth = buildSshAuthFromServer(server);
 
   const exists = await dockerContainerExists(auth, server.docker_wg_container);
   if (!exists) {

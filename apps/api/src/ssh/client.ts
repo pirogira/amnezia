@@ -4,7 +4,9 @@ export type SshAuth = {
   host: string;
   port: number;
   username: string;
-  privateKey: string;
+  /** OpenSSH / RSA PEM; PuTTY .ppk не подходит — конвертируйте или используйте password. */
+  privateKey?: string;
+  password?: string;
 };
 
 function assertNoShellInjection(value: string, pattern: RegExp, label: string): void {
@@ -22,6 +24,11 @@ export async function execRemote(
   command: string,
   stdin?: string,
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  const hasKey = Boolean(auth.privateKey && auth.privateKey.length > 0);
+  const hasPwd = Boolean(auth.password && auth.password.length > 0);
+  if (!hasKey && !hasPwd) {
+    return Promise.reject(new Error("SSH key or password required"));
+  }
   return new Promise((resolve, reject) => {
     const conn = new Client();
     conn
@@ -55,7 +62,8 @@ export async function execRemote(
         host: auth.host,
         port: auth.port,
         username: auth.username,
-        privateKey: auth.privateKey,
+        ...(auth.privateKey && auth.privateKey.length > 0 ? { privateKey: auth.privateKey } : {}),
+        ...(auth.password && auth.password.length > 0 ? { password: auth.password } : {}),
         readyTimeout: 20000,
       });
   });

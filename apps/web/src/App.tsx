@@ -403,6 +403,7 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
   const [sshPort, setSshPort] = useState(22);
   const [sshUser, setSshUser] = useState("root");
   const [sshKey, setSshKey] = useState("");
+  const [sshPassword, setSshPassword] = useState("");
   const [container, setContainer] = useState("amnezia-awg");
   const [wgInterface, setWgInterface] = useState("wg0");
   const [cidr, setCidr] = useState("10.8.0.0/24");
@@ -419,15 +420,17 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
       onSubmit={async (e) => {
         e.preventDefault();
         setMsg(null);
-        await api("/api/servers", {
-          method: "POST",
-          json: {
-            name,
-            sshHost,
-            sshPort,
-            sshUser,
-            sshPrivateKey: sshKey,
-            dockerWgContainer: container,
+        try {
+          await api("/api/servers", {
+            method: "POST",
+            json: {
+              name,
+              sshHost,
+              sshPort,
+              sshUser,
+              sshPrivateKey: sshKey,
+              sshPassword,
+              dockerWgContainer: container,
             wgInterface,
             vpnSubnetCidr: cidr,
             endpointHost: endpoint || sshHost,
@@ -435,10 +438,13 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
             driverMode,
             dockerComposePath: composePath || null,
             portChangeHookCmd: hook || null,
-          },
-        });
-        setMsg("Сервер добавлен");
-        await props.onCreated();
+            },
+          });
+          setMsg("Сервер добавлен");
+          await props.onCreated();
+        } catch (e) {
+          setMsg(e instanceof Error ? e.message : String(e));
+        }
       }}
     >
       <div className="field">
@@ -462,8 +468,26 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
         <input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
       </div>
       <div className="field" style={{ flex: "1 1 240px" }}>
-        <label>SSH private key (PEM)</label>
-        <textarea value={sshKey} onChange={(e) => setSshKey(e.target.value)} required />
+        <label>SSH private key (OpenSSH / RSA PEM)</label>
+        <textarea
+          value={sshKey}
+          onChange={(e) => setSshKey(e.target.value)}
+          placeholder="-----BEGIN OPENSSH PRIVATE KEY----- … или оставьте пустым, если ниже пароль"
+          rows={6}
+        />
+        <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.8rem" }}>
+          PuTTY .ppk сюда не подходит — конвертация: <code>puttygen key.ppk -O private-openssh -o key.pem</code>
+        </p>
+      </div>
+      <div className="field">
+        <label>SSH пароль (если без ключа)</label>
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={sshPassword}
+          onChange={(e) => setSshPassword(e.target.value)}
+          placeholder="пароль пользователя SSH — не пароль панели"
+        />
       </div>
       <div className="field">
         <label>Docker контейнер WG</label>
@@ -515,7 +539,11 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
       <button className="btn primary" type="submit">
         Добавить сервер
       </button>
-      {msg && <p className="muted">{msg}</p>}
+      {msg && (
+        <p className={msg === "Сервер добавлен" ? "muted" : "error"} style={{ width: "100%", marginTop: "0.5rem" }}>
+          {msg}
+        </p>
+      )}
     </form>
   );
 }

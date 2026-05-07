@@ -7,6 +7,8 @@ export type ServerRow = {
   ssh_port: number;
   ssh_user: string;
   ssh_private_key_enc: string;
+  /** Зашифрованный SSH-пароль; null/undefined если только ключ. */
+  ssh_password_enc?: string | null;
   docker_wg_container: string;
   wg_interface: string;
   vpn_subnet_cidr: string;

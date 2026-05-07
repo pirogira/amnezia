@@ -6,27 +6,17 @@ import {
   dockerExecWgRemovePeer,
   dockerExecWgSetPeer,
   dockerExecWgShowPublicKey,
-  type SshAuth,
 } from "../ssh/client.js";
+import { buildSshAuthFromServer } from "../ssh/buildAuth.js";
 import { buildClientConf, hostIpFromOctet, parseSubnetLastOctets } from "../wgConf.js";
 import type { ServerRow, VpnDriver } from "./types.js";
 
-function authFrom(server: ServerRow, privateKey: string): SshAuth {
-  return {
-    host: server.ssh_host,
-    port: server.ssh_port,
-    username: server.ssh_user,
-    privateKey,
-  };
-}
-
 export const sshWgDriver: VpnDriver = {
-  async createClient(server, body: CreateClientRequest, decryptSshKey, nextIpOctet) {
+  async createClient(server, body: CreateClientRequest, _decryptSshKey, nextIpOctet) {
     if (body.protocol !== "wireguard" && body.protocol !== "amneziawg") {
       throw new Error("SSH driver supports wireguard/amneziawg only in MVP");
     }
-    const key = decryptSshKey();
-    const auth = authFrom(server, key);
+    const auth = buildSshAuthFromServer(server);
     const ok = await dockerContainerExists(auth, server.docker_wg_container);
     if (!ok) throw new Error(`docker container not found: ${server.docker_wg_container}`);
 
@@ -67,8 +57,8 @@ export const sshWgDriver: VpnDriver = {
     };
   },
 
-  async revokeClient(server, publicKey, decryptSshKey) {
-    const auth = authFrom(server, decryptSshKey());
+  async revokeClient(server, publicKey, _decryptSshKey) {
+    const auth = buildSshAuthFromServer(server);
     await dockerExecWgRemovePeer(
       auth,
       server.docker_wg_container,

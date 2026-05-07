@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS vpn_servers (
   ssh_port INTEGER NOT NULL,
   ssh_user TEXT NOT NULL,
   ssh_private_key_enc TEXT NOT NULL,
+  ssh_password_enc TEXT,
   docker_wg_container TEXT NOT NULL,
   wg_interface TEXT NOT NULL DEFAULT 'wg0',
   vpn_subnet_cidr TEXT NOT NULL,
@@ -70,6 +71,10 @@ export function getDb(): Database.Database {
   const cols = db.prepare(`PRAGMA table_info(vpn_clients)`).all() as { name: string }[];
   if (cols.length && !cols.some((c) => c.name === "client_conf_enc")) {
     db.exec(`ALTER TABLE vpn_clients ADD COLUMN client_conf_enc TEXT`);
+  }
+  const srvCols = db.prepare(`PRAGMA table_info(vpn_servers)`).all() as { name: string }[];
+  if (srvCols.length && !srvCols.some((c) => c.name === "ssh_password_enc")) {
+    db.exec(`ALTER TABLE vpn_servers ADD COLUMN ssh_password_enc TEXT`);
   }
   return db;
 }

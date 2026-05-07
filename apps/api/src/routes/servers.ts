@@ -8,22 +8,34 @@ import { writeAudit } from "../audit.js";
 import type { ServerRow } from "../drivers/types.js";
 import { changeServerListenPort } from "../services/portChange.js";
 
-const serverCreate = z.object({
-  name: z.string().min(1).max(128),
-  sshHost: z.string().min(1).max(255),
-  sshPort: z.coerce.number().int().min(1).max(65535).default(22),
-  sshUser: z.string().min(1).max(64),
-  sshPrivateKey: z.string().min(1).max(65535),
-  dockerWgContainer: z.string().min(1).max(128),
-  wgInterface: z.string().regex(/^wg[0-9]+$/).default("wg0"),
-  vpnSubnetCidr: z.string().regex(/^\d+\.\d+\.\d+\.\d+\/24$/),
-  endpointHost: z.string().min(1).max(255),
-  listenPort: z.coerce.number().int().min(1).max(65535).default(51820),
-  dockerComposePath: z.string().max(512).nullable().optional(),
-  composeServiceName: z.string().max(128).nullable().optional(),
-  portChangeHookCmd: z.string().max(512).nullable().optional(),
-  driverMode: z.enum(["ssh", "mock"]).default("ssh"),
-});
+const serverCreate = z
+  .object({
+    name: z.string().min(1).max(128),
+    sshHost: z.string().min(1).max(255),
+    sshPort: z.coerce.number().int().min(1).max(65535).default(22),
+    sshUser: z.string().min(1).max(64),
+    sshPrivateKey: z.string().max(65535).default(""),
+    sshPassword: z.string().max(2048).default(""),
+    dockerWgContainer: z.string().min(1).max(128),
+    wgInterface: z.string().regex(/^wg[0-9]+$/).default("wg0"),
+    vpnSubnetCidr: z.string().regex(/^\d+\.\d+\.\d+\.\d+\/24$/),
+    endpointHost: z.string().min(1).max(255),
+    listenPort: z.coerce.number().int().min(1).max(65535).default(51820),
+    dockerComposePath: z.string().max(512).nullable().optional(),
+    composeServiceName: z.string().max(128).nullable().optional(),
+    portChangeHookCmd: z.string().max(512).nullable().optional(),
+    driverMode: z.enum(["ssh", "mock"]).default("ssh"),
+  })
+  .superRefine((b, ctx) => {
+    if (b.driverMode !== "ssh") return;
+    if (!b.sshPrivateKey.trim() && !b.sshPassword.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Для SSH укажите приватный ключ (OpenSSH/RSA PEM) или пароль.",
+        path: ["sshPrivateKey"],
+      });
+    }
+  });
 
 const portBody = z.object({
   port: z.coerce.number().int().min(1024).max(65535),
@@ -55,14 +67,18 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
     const b = parsed.data;
     const id = randomUUID();
     const now = new Date().toISOString();
-    const keyEnc = encryptSecret(b.sshPrivateKey, getEncryptionMaster());
+    const master = getEncryptionMaster();
+    const keyEnc = encryptSecret(b.sshPrivateKey.trim(), master);
+    const pwdEnc = b.sshPassword.trim()
+      ? encryptSecret(b.sshPassword.trim(), master)
+      : null;
     getDb()
       .prepare(
         `INSERT INTO vpn_servers (
-        id, name, ssh_host, ssh_port, ssh_user, ssh_private_key_enc,
+        id, name, ssh_host, ssh_port, ssh_user, ssh_private_key_enc, ssh_password_enc,
         docker_wg_container, wg_interface, vpn_subnet_cidr, endpoint_host, listen_port,
         docker_compose_path, compose_service_name, port_change_hook_cmd, driver_mode, created_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
@@ -71,6 +87,7 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
         b.sshPort,
         b.sshUser,
         keyEnc,
+        pwdEnc,
         b.dockerWgContainer,
         b.wgInterface,
         b.vpnSubnetCidr,
