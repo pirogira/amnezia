@@ -657,6 +657,11 @@ function ClientForm(props: {
           В ссылке будет новый UUID клиента. Его нужно прописать в Xray (или другом ядре) на VPS в том же inbound, что и остальные клиенты Reality, иначе подключение не примет.
         </p>
       )}
+      {protocol === "amneziawg" && (
+        <p className="muted" style={{ width: "100%", fontSize: "0.85rem" }}>
+          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code> — для «родного» формата в AmneziaWG.
+        </p>
+      )}
       <div className="field">
         <label>Порт в конфиге</label>
         <input
