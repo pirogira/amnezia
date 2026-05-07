@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS vpn_servers (
   compose_service_name TEXT,
   port_change_hook_cmd TEXT,
   driver_mode TEXT NOT NULL DEFAULT 'ssh',
+  vless_reality_json TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -75,6 +76,10 @@ export function getDb(): Database.Database {
   const srvCols = db.prepare(`PRAGMA table_info(vpn_servers)`).all() as { name: string }[];
   if (srvCols.length && !srvCols.some((c) => c.name === "ssh_password_enc")) {
     db.exec(`ALTER TABLE vpn_servers ADD COLUMN ssh_password_enc TEXT`);
+  }
+  const srvCols2 = db.prepare(`PRAGMA table_info(vpn_servers)`).all() as { name: string }[];
+  if (srvCols2.length && !srvCols2.some((c) => c.name === "vless_reality_json")) {
+    db.exec(`ALTER TABLE vpn_servers ADD COLUMN vless_reality_json TEXT`);
   }
   return db;
 }

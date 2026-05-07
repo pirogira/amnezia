@@ -7,6 +7,21 @@ import { getEncryptionMaster } from "../cryptoEnv.js";
 import { writeAudit } from "../audit.js";
 import type { ServerRow } from "../drivers/types.js";
 import { changeServerListenPort } from "../services/portChange.js";
+import { parseVlessRealityJson } from "../vlessUri.js";
+
+const vlessRealityShape = z
+  .object({
+    pbk: z.string().min(1).max(512),
+    sni: z.string().min(1).max(255),
+    sid: z.string().min(1).max(64),
+    fp: z.string().max(64).optional(),
+    spx: z.string().max(512).optional(),
+    type: z.string().max(32).optional(),
+    encryption: z.string().max(32).optional(),
+    security: z.string().max(32).optional(),
+    flow: z.string().max(64).optional(),
+  })
+  .optional();
 
 const serverCreate = z
   .object({
@@ -25,6 +40,8 @@ const serverCreate = z
     composeServiceName: z.string().max(128).nullable().optional(),
     portChangeHookCmd: z.string().max(512).nullable().optional(),
     driverMode: z.enum(["ssh", "mock"]).default("ssh"),
+    /** Параметры Reality для экспорта vless:// (опционально). */
+    vlessReality: vlessRealityShape,
   })
   .superRefine((b, ctx) => {
     if (b.driverMode !== "ssh") return;
@@ -72,13 +89,14 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
     const pwdEnc = b.sshPassword.trim()
       ? encryptSecret(b.sshPassword.trim(), master)
       : null;
+    const vlessJson = b.vlessReality ? JSON.stringify(b.vlessReality) : null;
     getDb()
       .prepare(
         `INSERT INTO vpn_servers (
         id, name, ssh_host, ssh_port, ssh_user, ssh_private_key_enc, ssh_password_enc,
         docker_wg_container, wg_interface, vpn_subnet_cidr, endpoint_host, listen_port,
-        docker_compose_path, compose_service_name, port_change_hook_cmd, driver_mode, created_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        docker_compose_path, compose_service_name, port_change_hook_cmd, driver_mode, vless_reality_json, created_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
@@ -97,6 +115,7 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
         b.composeServiceName ?? null,
         b.portChangeHookCmd ?? null,
         b.driverMode,
+        vlessJson,
         now,
       );
     writeAudit(sub, "server_create", { serverId: id, name: b.name });
@@ -145,6 +164,7 @@ function sanitizeServer(s: ServerRow) {
     composeServiceName: s.compose_service_name,
     portChangeHookCmd: s.port_change_hook_cmd,
     driverMode: s.driver_mode,
+    vlessReality: parseVlessRealityJson(s.vless_reality_json ?? undefined),
     createdAt: s.created_at,
   };
 }

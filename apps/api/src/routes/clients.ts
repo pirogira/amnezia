@@ -10,7 +10,7 @@ import { createVpnClient, revokeVpnClient } from "../services/clients.js";
 
 const createBody = z.object({
   name: z.string().min(1).max(128),
-  protocol: z.enum(["amneziawg", "wireguard", "openvpn", "cloak"]),
+  protocol: z.enum(["amneziawg", "wireguard", "openvpn", "cloak", "vless"]),
   listenPort: z.coerce.number().int().min(1).max(65535),
   security: z
     .object({
@@ -63,7 +63,8 @@ export async function clientRoutes(app: FastifyInstance): Promise<void> {
     if (
       row.driver_mode === "ssh" &&
       body.protocol !== "wireguard" &&
-      body.protocol !== "amneziawg"
+      body.protocol !== "amneziawg" &&
+      body.protocol !== "vless"
     ) {
       return reply.code(400).send({ error: "protocol_not_supported_for_ssh_driver" });
     }

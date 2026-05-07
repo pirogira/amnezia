@@ -4,6 +4,18 @@ import type { VpnProtocol } from "@amnesia-veb/shared";
 import { api, getToken, setToken } from "./api.js";
 
 type Me = { id: string; username: string; created_at: string };
+type VlessReality = {
+  pbk: string;
+  sni: string;
+  sid: string;
+  fp?: string;
+  spx?: string;
+  type?: string;
+  encryption?: string;
+  security?: string;
+  flow?: string;
+};
+
 type Server = {
   id: string;
   name: string;
@@ -18,6 +30,7 @@ type Server = {
   driverMode: string;
   dockerComposePath: string | null;
   portChangeHookCmd: string | null;
+  vlessReality?: VlessReality | null;
 };
 type ClientRow = {
   id: string;
@@ -227,12 +240,12 @@ export function App() {
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = url;
-                        a.download = `${c.name}.conf`;
+                        a.download = c.protocol === "vless" ? `${c.name}.txt` : `${c.name}.conf`;
                         a.click();
                         URL.revokeObjectURL(url);
                       }}
                     >
-                      .conf
+                      {c.protocol === "vless" ? "ссылка" : ".conf"}
                     </button>{" "}
                     {!c.revoked_at && (
                       <button
@@ -412,6 +425,7 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
   const [driverMode, setDriverMode] = useState<"ssh" | "mock">("mock");
   const [composePath, setComposePath] = useState("");
   const [hook, setHook] = useState("");
+  const [vlessJson, setVlessJson] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
 
   return (
@@ -420,6 +434,15 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
       onSubmit={async (e) => {
         e.preventDefault();
         setMsg(null);
+        let vlessReality: VlessReality | undefined;
+        if (vlessJson.trim()) {
+          try {
+            vlessReality = JSON.parse(vlessJson) as VlessReality;
+          } catch {
+            setMsg("Невалидный JSON в поле VLESS Reality");
+            return;
+          }
+        }
         try {
           await api("/api/servers", {
             method: "POST",
@@ -438,6 +461,7 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
             driverMode,
             dockerComposePath: composePath || null,
             portChangeHookCmd: hook || null,
+            vlessReality,
             },
           });
           setMsg("Сервер добавлен");
@@ -536,6 +560,19 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
           placeholder="/opt/amnesia/set-port.sh"
         />
       </div>
+      <div className="field" style={{ flex: "1 1 100%" }}>
+        <label>VLESS Reality (JSON, опционально)</label>
+        <textarea
+          value={vlessJson}
+          onChange={(e) => setVlessJson(e.target.value)}
+          rows={5}
+          placeholder={`{\n  "pbk": "…публичный ключ Reality…",\n  "sni": "aws.amazon.com",\n  "sid": "8b",\n  "fp": "chrome",\n  "spx": "/",\n  "type": "tcp",\n  "encryption": "none",\n  "security": "reality"\n}`}
+          style={{ fontFamily: "monospace", fontSize: "0.85rem" }}
+        />
+        <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.8rem" }}>
+          Нужно для протокола «VLESS» в выдаче клиента: ссылка vless:// строится из endpoint + порта сервера и этих полей. Панель пока не правит Xray на VPS — UUID в ссылке нужно вручную добавить в inbound (или позже через скрипт).
+        </p>
+      </div>
       <button className="btn primary" type="submit">
         Добавить сервер
       </button>
@@ -602,10 +639,21 @@ function ClientForm(props: {
         <select value={protocol} onChange={(e) => setProtocol(e.target.value as VpnProtocol)}>
           <option value="amneziawg">AmneziaWG</option>
           <option value="wireguard">WireGuard</option>
+          <option value="vless">VLESS + Reality (ссылка vless://)</option>
           <option value="openvpn">OpenVPN (заглушка)</option>
           <option value="cloak">Cloak (заглушка)</option>
         </select>
       </div>
+      {protocol === "vless" && !props.server.vlessReality && (
+        <p className="error" style={{ width: "100%" }}>
+          На этом сервере не задан JSON VLESS Reality. Отредактируйте сервер нельзя в UI — добавьте новый сервер с заполненным блоком «VLESS Reality» или через API.
+        </p>
+      )}
+      {protocol === "vless" && (
+        <p className="muted" style={{ width: "100%", fontSize: "0.85rem" }}>
+          В ссылке будет новый UUID клиента. Его нужно прописать в Xray (или другом ядре) на VPS в том же inbound, что и остальные клиенты Reality, иначе подключение не примет.
+        </p>
+      )}
       <div className="field">
         <label>Порт в конфиге</label>
         <input
@@ -614,19 +662,23 @@ function ClientForm(props: {
           onChange={(e) => setListenPort(Number(e.target.value))}
         />
       </div>
-      <div className="field">
-        <label>DNS</label>
-        <input value={dns} onChange={(e) => setDns(e.target.value)} />
-      </div>
-      <div className="field">
-        <label>junk_packet_count (AWG)</label>
-        <input
-          type="number"
-          value={junkCount}
-          onChange={(e) => setJunkCount(e.target.value === "" ? "" : Number(e.target.value))}
-          placeholder="опционально"
-        />
-      </div>
+      {protocol !== "vless" && (
+        <>
+          <div className="field">
+            <label>DNS</label>
+            <input value={dns} onChange={(e) => setDns(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>junk_packet_count (AWG)</label>
+            <input
+              type="number"
+              value={junkCount}
+              onChange={(e) => setJunkCount(e.target.value === "" ? "" : Number(e.target.value))}
+              placeholder="опционально"
+            />
+          </div>
+        </>
+      )}
       <div className="field">
         <label>Истекает (ISO)</label>
         <input value={expires} onChange={(e) => setExpires(e.target.value)} placeholder="2027-01-01T00:00:00.000Z" />
@@ -636,8 +688,9 @@ function ClientForm(props: {
       </button>
       {clientErr && <p className="error" style={{ width: "100%", margin: "0.5rem 0 0" }}>{clientErr}</p>}
       <p className="muted" style={{ width: "100%", margin: "0.75rem 0 0", fontSize: "0.85rem" }}>
-        У WireGuard / AmneziaWG нет отдельного «логина и пароля» как у сайта: доступ — через файл .conf и QR ниже
-        (ключи внутри конфига).
+        {protocol === "vless"
+          ? "Для VLESS — одна строка vless://… (и QR с ней), её можно вставить в клиенты с импортом по ссылке."
+          : "У WireGuard / AmneziaWG нет отдельного «логина и пароля» как у сайта: доступ — через файл .conf и QR ниже (ключи внутри конфига)."}
       </p>
     </form>
   );

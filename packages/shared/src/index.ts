@@ -1,7 +1,7 @@
 /** Expected VPS layout for SSH driver (adjust in panel DB / env). */
 export const DEFAULT_WG_INTERFACE = "wg0";
 
-export type VpnProtocol = "amneziawg" | "wireguard" | "openvpn" | "cloak";
+export type VpnProtocol = "amneziawg" | "wireguard" | "openvpn" | "cloak" | "vless";
 
 export interface SecurityProfile {
   /** AmneziaWG-style junk/init tuning; passed to server hooks or stored for export-only until hooks apply. */

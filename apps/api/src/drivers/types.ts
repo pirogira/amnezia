@@ -18,6 +18,8 @@ export type ServerRow = {
   compose_service_name: string | null;
   port_change_hook_cmd: string | null;
   driver_mode: string;
+  /** JSON с полями pbk, sni, sid, fp, spx, type, encryption, security, flow (опц.). */
+  vless_reality_json?: string | null;
   created_at: string;
 };
 
