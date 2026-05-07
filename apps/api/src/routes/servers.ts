@@ -32,7 +32,7 @@ const serverCreate = z
     sshPrivateKey: z.string().max(65535).default(""),
     sshPassword: z.string().max(2048).default(""),
     dockerWgContainer: z.string().min(1).max(128),
-    wgInterface: z.string().regex(/^wg[0-9]+$/).default("wg0"),
+    wgInterface: z.string().regex(/^(?:wg|awg)[0-9]+$/).default("wg0"),
     vpnSubnetCidr: z.string().regex(/^\d+\.\d+\.\d+\.\d+\/24$/),
     endpointHost: z.string().min(1).max(255),
     listenPort: z.coerce.number().int().min(1).max(65535).default(51820),

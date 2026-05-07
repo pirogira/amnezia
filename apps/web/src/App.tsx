@@ -518,8 +518,11 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
         <input value={container} onChange={(e) => setContainer(e.target.value)} />
       </div>
       <div className="field">
-        <label>Интерфейс</label>
+        <label>Интерфейс (wg0 или awg0)</label>
         <input value={wgInterface} onChange={(e) => setWgInterface(e.target.value)} />
+        <p className="muted" style={{ margin: "0.25rem 0 0", fontSize: "0.8rem" }}>
+          AmneziaWG / awg2: часто <code>awg0</code>. Проверка: <code>docker exec ИМЯ_КОНТЕЙНЕРА wg show</code>
+        </p>
       </div>
       <div className="field">
         <label>VPN subnet /24</label>

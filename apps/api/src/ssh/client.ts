@@ -15,7 +15,8 @@ function assertNoShellInjection(value: string, pattern: RegExp, label: string): 
 
 /** Container/image-safe name segment */
 export const SAFE_CONTAINER = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
-export const SAFE_IFACE = /^wg[0-9]+$/;
+/** WireGuard: wg0; AmneziaWG в контейнере часто awg0 / awg1 */
+export const SAFE_IFACE = /^(?:wg|awg)[0-9]+$/;
 export const SAFE_HOOK_PATH = /^\/[a-zA-Z0-9/_-]+\.sh$/;
 export const SAFE_COMPOSE_PATH = /^\/[a-zA-Z0-9/_.-]+\.(ya?ml)$/;
 
