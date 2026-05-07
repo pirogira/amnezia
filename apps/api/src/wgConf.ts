@@ -20,7 +20,8 @@ const AWG_WGSHOW_TO_CONF: Record<string, string> = {
   i5: "I5",
 };
 
-const AWG_CONF_LINE_ORDER = [
+/** Порядок строк AmneziaWG в .conf и в `vpn://` JSON. */
+export const AWG_CONF_LINE_ORDER = [
   "Jc",
   "Jmin",
   "Jmax",

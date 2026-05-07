@@ -51,6 +51,7 @@ export function App() {
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [lastConf, setLastConf] = useState<string | null>(null);
+  const [lastVpnUri, setLastVpnUri] = useState<string | null>(null);
 
   const activeServer = useMemo(
     () => servers.find((s) => s.id === activeServerId) ?? null,
@@ -196,19 +197,42 @@ export function App() {
           <h2 className="h2">Клиенты · {activeServer.name}</h2>
           <ClientForm
             server={activeServer}
-            onCreated={async (conf) => {
+            onCreated={async (conf, vpnUri) => {
               setLastConf(conf);
+              setLastVpnUri(vpnUri ?? null);
               const list = await api<ClientRow[]>(`/api/servers/${activeServer.id}/clients`);
               setClients(list);
             }}
           />
           {lastConf && (
             <div style={{ marginTop: "1rem" }}>
-              <p className="muted">Последний созданный конфиг</p>
+              <p className="muted">Последний созданный конфиг (.conf)</p>
               <div className="qr">
                 <QRCodeSVG value={lastConf} size={180} />
               </div>
               <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>{lastConf}</pre>
+              {lastVpnUri && (
+                <div style={{ marginTop: "1rem" }}>
+                  <p className="muted">Импорт в приложение Amnezia (ссылка vpn://)</p>
+                  <div className="qr">
+                    <QRCodeSVG value={lastVpnUri} size={180} />
+                  </div>
+                  <textarea
+                    readOnly
+                    rows={4}
+                    value={lastVpnUri}
+                    style={{ width: "100%", fontFamily: "monospace", fontSize: "0.7rem" }}
+                  />
+                  <button
+                    className="btn"
+                    type="button"
+                    style={{ marginTop: "0.35rem" }}
+                    onClick={() => void navigator.clipboard.writeText(lastVpnUri)}
+                  >
+                    Копировать vpn://
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <table className="table" style={{ marginTop: "1rem" }}>
@@ -246,7 +270,28 @@ export function App() {
                       }}
                     >
                       {c.protocol === "vless" ? "ссылка" : ".conf"}
-                    </button>{" "}
+                    </button>
+                    {c.protocol === "amneziawg" && (
+                      <>
+                        {" "}
+                        <button
+                          className="btn"
+                          type="button"
+                          onClick={async () => {
+                            const { vpnUri } = await api<{ vpnUri: string }>(`/api/clients/${c.id}/vpn`);
+                            const blob = new Blob([vpnUri], { type: "text/plain" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `${c.name}-amnezia.txt`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                        >
+                          vpn://
+                        </button>
+                      </>
+                    )}{" "}
                     {!c.revoked_at && (
                       <button
                         className="btn danger"
@@ -590,7 +635,7 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
 
 function ClientForm(props: {
   server: Server;
-  onCreated: (conf: string) => Promise<void>;
+  onCreated: (conf: string, vpnUri?: string) => Promise<void>;
 }) {
   const [name, setName] = useState("user1");
   const [protocol, setProtocol] = useState<VpnProtocol>("amneziawg");
@@ -612,7 +657,7 @@ function ClientForm(props: {
           const security: Record<string, unknown> = {};
           if (dns) security.dns = dns;
           if (junkCount !== "") security.junkPacketCount = Number(junkCount);
-          const r = await api<{ clientConf: string; id: string; assignedIp: string }>(
+          const r = await api<{ clientConf: string; id: string; assignedIp: string; vpnUri?: string }>(
             `/api/servers/${props.server.id}/clients`,
             {
               method: "POST",
@@ -625,7 +670,7 @@ function ClientForm(props: {
               },
             },
           );
-          await props.onCreated(r.clientConf);
+          await props.onCreated(r.clientConf, r.vpnUri);
         } catch (err) {
           setClientErr(err instanceof Error ? err.message : String(err));
         } finally {
@@ -659,7 +704,7 @@ function ClientForm(props: {
       )}
       {protocol === "amneziawg" && (
         <p className="muted" style={{ width: "100%", fontSize: "0.85rem" }}>
-          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code> — для «родного» формата в AmneziaWG.
+          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code>. После создания также выдаётся ссылка <code>vpn://…</code> для импорта в приложение Amnezia (как при «Поделиться» в официальном клиенте).
         </p>
       )}
       <div className="field">
@@ -698,7 +743,7 @@ function ClientForm(props: {
       <p className="muted" style={{ width: "100%", margin: "0.75rem 0 0", fontSize: "0.85rem" }}>
         {protocol === "vless"
           ? "Для VLESS — одна строка vless://… (и QR с ней), её можно вставить в клиенты с импортом по ссылке."
-          : "У WireGuard / AmneziaWG нет отдельного «логина и пароля» как у сайта: доступ — через файл .conf и QR ниже (ключи внутри конфига)."}
+          : "У WireGuard / AmneziaWG доступ — через файл .conf и QR; для AmneziaWG дополнительно — ссылка vpn:// и QR по ней для приложения Amnezia."}
       </p>
     </form>
   );

@@ -5,6 +5,7 @@ import { decryptSecret, encryptSecret } from "../crypto.js";
 import { getEncryptionMaster } from "../cryptoEnv.js";
 import { getDriver } from "../drivers/index.js";
 import { parseSubnetLastOctets } from "../wgConf.js";
+import { buildAmneziaVpnUriForAwgClient } from "../amneziaVpnUri.js";
 import { buildVlessRealityUri, parseVlessRealityJson } from "../vlessUri.js";
 import type { ServerRow } from "../drivers/types.js";
 
@@ -112,9 +113,26 @@ export async function createVpnClient(server: ServerRow, body: CreateClientReque
     now,
   );
 
+  let vpnUri: string | undefined;
+  if (body.protocol === "amneziawg") {
+    try {
+      vpnUri = buildAmneziaVpnUriForAwgClient(
+        server.name,
+        server,
+        body.listenPort,
+        created.publicKey,
+        created.clientConf,
+        body.security.dns,
+      );
+    } catch {
+      /* .conf без AWG / неполный разбор — только .conf */
+    }
+  }
+
   return {
     id,
     clientConf: created.clientConf,
+    vpnUri,
     publicKey: created.publicKey,
     assignedIp: created.assignedIp,
     createdAt: now,

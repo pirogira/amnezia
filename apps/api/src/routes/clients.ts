@@ -7,6 +7,7 @@ import { writeAudit } from "../audit.js";
 import type { CreateClientRequest } from "@amnesia-veb/shared";
 import type { ServerRow } from "../drivers/types.js";
 import { createVpnClient, revokeVpnClient } from "../services/clients.js";
+import { buildAmneziaVpnUriForAwgClient } from "../amneziaVpnUri.js";
 
 const createBody = z.object({
   name: z.string().min(1).max(128),
@@ -113,5 +114,62 @@ export async function clientRoutes(app: FastifyInstance): Promise<void> {
     const conf = decryptSecret(row.client_conf_enc, getEncryptionMaster());
     reply.header("Content-Type", "text/plain; charset=utf-8");
     return conf;
+  });
+
+  /** Ссылка `vpn://…` для импорта в приложение Amnezia (только AmneziaWG). */
+  app.get("/clients/:clientId/vpn", async (req, reply) => {
+    const sub = await requireUser(req, reply);
+    if (!sub) return;
+    const clientId = (req.params as { clientId: string }).clientId;
+    const row = getDb()
+      .prepare(
+        `SELECT c.protocol, c.client_conf_enc, c.public_key, c.listen_port, c.security_json, c.revoked_at,
+                s.name as server_name, s.endpoint_host, s.docker_wg_container, s.vpn_subnet_cidr
+         FROM vpn_clients c JOIN vpn_servers s ON c.server_id = s.id WHERE c.id = ?`,
+      )
+      .get(clientId) as
+      | {
+          protocol: string;
+          client_conf_enc: string | null;
+          public_key: string;
+          listen_port: number;
+          security_json: string | null;
+          revoked_at: string | null;
+          server_name: string;
+          endpoint_host: string;
+          docker_wg_container: string;
+          vpn_subnet_cidr: string;
+        }
+      | undefined;
+    if (!row || row.revoked_at) return reply.code(404).send({ error: "not_found" });
+    if (row.protocol !== "amneziawg") {
+      return reply.code(404).send({ error: "not_amneziawg", message: "vpn:// только для протокола AmneziaWG" });
+    }
+    if (!row.client_conf_enc) return reply.code(404).send({ error: "no_config" });
+    const conf = decryptSecret(row.client_conf_enc, getEncryptionMaster());
+    let security: { dns?: string } = {};
+    try {
+      if (row.security_json) security = JSON.parse(row.security_json) as { dns?: string };
+    } catch {
+      /* ignore */
+    }
+    try {
+      const vpnUri = buildAmneziaVpnUriForAwgClient(
+        row.server_name,
+        {
+          endpoint_host: row.endpoint_host,
+          docker_wg_container: row.docker_wg_container,
+          vpn_subnet_cidr: row.vpn_subnet_cidr,
+        },
+        row.listen_port,
+        row.public_key,
+        conf,
+        security.dns,
+      );
+      return { vpnUri };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "error";
+      return reply.code(500).send({ error: "vpn_uri_build_failed", message: msg });
+    }
   });
 }
