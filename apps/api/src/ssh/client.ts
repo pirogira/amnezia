@@ -100,10 +100,16 @@ export async function dockerExecWgShowPublicKey(
 ): Promise<string> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
-  const cmd = `docker exec ${shellQuote(container)} wg show ${shellQuote(iface)} public-key`;
+  /** `wg show IFACE public-key` на awg0 (AmneziaWG) часто даёт «Protocol not supported» — парсим полный `wg show`. */
+  const cmd = `docker exec ${shellQuote(container)} wg show ${shellQuote(iface)}`;
   const r = await execRemote(auth, cmd);
-  if (r.code !== 0) throw new Error(`wg show public-key failed: ${r.stderr || r.stdout}`);
-  return r.stdout.trim();
+  if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
+  const head = r.stdout.split(/\npeer:/i)[0] ?? r.stdout;
+  const m = /public key:\s*([A-Za-z0-9+/=]+)/.exec(head);
+  if (!m) {
+    throw new Error(`wg show: не найден public key интерфейса: ${r.stdout.slice(0, 400)}`);
+  }
+  return m[1].trim();
 }
 
 export async function dockerExecWgSetPeer(
