@@ -642,6 +642,8 @@ function ClientForm(props: {
   const [listenPort, setListenPort] = useState(props.server.listenPort);
   const [dns, setDns] = useState("1.1.1.1");
   const [junkCount, setJunkCount] = useState<number | "">("");
+  const [routeIpv6, setRouteIpv6] = useState(false);
+  const [mtu, setMtu] = useState<number | "">("");
   const [expires, setExpires] = useState("");
   const [clientErr, setClientErr] = useState<string | null>(null);
   const [clientBusy, setClientBusy] = useState(false);
@@ -657,6 +659,8 @@ function ClientForm(props: {
           const security: Record<string, unknown> = {};
           if (dns) security.dns = dns;
           if (junkCount !== "") security.junkPacketCount = Number(junkCount);
+          if (routeIpv6) security.includeIpv6DefaultRoute = true;
+          if (mtu !== "") security.mtu = Number(mtu);
           const r = await api<{ clientConf: string; id: string; assignedIp: string; vpnUri?: string }>(
             `/api/servers/${props.server.id}/clients`,
             {
@@ -704,7 +708,7 @@ function ClientForm(props: {
       )}
       {protocol === "amneziawg" && (
         <p className="muted" style={{ width: "100%", fontSize: "0.85rem" }}>
-          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code>. После создания также выдаётся ссылка <code>vpn://…</code> для импорта в приложение Amnezia (как при «Поделиться» в официальном клиенте).
+          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code>. По умолчанию в туннель уходит только IPv4 (<code>0.0.0.0/0</code>) и MTU 1280 — так стабильнее, если на сервере нет IPv6/NAT. После создания также выдаётся <code>vpn://…</code> для приложения Amnezia.
         </p>
       )}
       <div className="field">
@@ -728,6 +732,21 @@ function ClientForm(props: {
               value={junkCount}
               onChange={(e) => setJunkCount(e.target.value === "" ? "" : Number(e.target.value))}
               placeholder="опционально"
+            />
+          </div>
+          <div className="field" style={{ flex: "1 1 100%", alignItems: "flex-start" }}>
+            <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", cursor: "pointer" }}>
+              <input type="checkbox" checked={routeIpv6} onChange={(e) => setRouteIpv6(e.target.checked)} />
+              Маршрут IPv6 (<code>::/0</code>) — только если на сервере настроен IPv6 через VPN
+            </label>
+          </div>
+          <div className="field">
+            <label>MTU (опционально)</label>
+            <input
+              type="number"
+              value={mtu}
+              onChange={(e) => setMtu(e.target.value === "" ? "" : Number(e.target.value))}
+              placeholder="пусто = авто (1280 для AmneziaWG)"
             />
           </div>
         </>

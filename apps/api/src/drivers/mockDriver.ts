@@ -33,6 +33,7 @@ export const mockDriver: VpnDriver = {
       endpoint: server.endpoint_host,
       listenPort: body.listenPort,
       security: body.security,
+      protocol: body.protocol === "amneziawg" ? "amneziawg" : "wireguard",
     });
     return { publicKey: pub, privateKey: priv, assignedIp, clientConf: conf };
   },

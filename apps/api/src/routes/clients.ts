@@ -22,6 +22,8 @@ const createBody = z.object({
       responsePacketJunkSize: z.number().int().optional(),
       presharedKey: z.string().max(256).optional(),
       dns: z.string().max(255).optional(),
+      includeIpv6DefaultRoute: z.boolean().optional(),
+      mtu: z.coerce.number().int().min(576).max(1500).optional(),
     })
     .default({}),
   expiresAt: z.string().max(40).nullable().optional(),

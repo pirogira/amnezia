@@ -81,6 +81,8 @@ export function buildClientConf(params: {
   security: SecurityProfile;
   /** Параметры AmneziaWG с сервера (`wg show`); только для протокола amneziawg. */
   awgNativeParams?: Record<string, string>;
+  /** Для amneziawg подставляем MTU даже если с сервера не пришли Jc/Jmin… в дампе. */
+  protocol?: "wireguard" | "amneziawg";
 }): string {
   const dnsLine = params.security.dns
     ? `DNS = ${params.security.dns}\n`
@@ -91,12 +93,21 @@ export function buildClientConf(params: {
   const native = Boolean(params.awgNativeParams && Object.keys(params.awgNativeParams).length > 0);
   const junkLines = native ? "" : formatJunkComments(params.security);
   const awgLines = native && params.awgNativeParams ? formatAwgInterfaceLines(params.awgNativeParams) : "";
+  /** Только IPv4: иначе при ::/0 весь IPv6 идёт в WG без v6-NAT на сервере — «подключено», но интернет «мёртвый». */
+  const allowedIps =
+    params.security.includeIpv6DefaultRoute === true ? "0.0.0.0/0, ::/0" : "0.0.0.0/0";
+  const mtuLine =
+    params.security.mtu != null && params.security.mtu > 0
+      ? `MTU = ${params.security.mtu}\n`
+      : native || params.protocol === "amneziawg"
+        ? "MTU = 1280\n"
+        : "";
   return `[Interface]
 PrivateKey = ${params.clientPrivateKey}
 Address = ${params.assignedIp}/32
-${dnsLine}${junkLines}${awgLines}[Peer]
+${mtuLine}${dnsLine}${junkLines}${awgLines}[Peer]
 PublicKey = ${params.serverPublicKey}
-${psk}AllowedIPs = 0.0.0.0/0, ::/0
+${psk}AllowedIPs = ${allowedIps}
 Endpoint = ${params.endpoint}:${params.listenPort}
 PersistentKeepalive = 25
 `;

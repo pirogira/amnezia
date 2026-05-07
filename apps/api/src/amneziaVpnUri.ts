@@ -27,6 +27,10 @@ export type ParsedPanelWgConf = {
   peerPublicKey: string;
   presharedKey: string;
   endpoint: string;
+  /** Строка как в .conf, напр. `0.0.0.0/0` или `0.0.0.0/0, ::/0`. */
+  allowedIps: string;
+  /** MTU из [Interface], если есть. */
+  mtu?: string;
   awgNative: Record<string, string>;
 };
 
@@ -40,6 +44,8 @@ export function parseWireGuardConfFromPanel(conf: string): ParsedPanelWgConf {
   let peerPublicKey = "";
   let presharedKey = "";
   let endpoint = "";
+  let allowedIps = "0.0.0.0/0";
+  let mtu: string | undefined;
   const awgNative: Record<string, string> = {};
 
   for (const rawLine of conf.split(/\r?\n/)) {
@@ -60,11 +66,13 @@ export function parseWireGuardConfFromPanel(conf: string): ParsedPanelWgConf {
     if (section === "interface") {
       if (k === "PrivateKey") privateKey = v;
       else if (k === "Address") address = v;
+      else if (k === "MTU") mtu = v;
       else if (AWG_KEYS.has(k)) awgNative[k] = v;
     } else if (section === "peer") {
       if (k === "PublicKey") peerPublicKey = v;
       else if (k === "PresharedKey") presharedKey = v;
       else if (k === "Endpoint") endpoint = v;
+      else if (k === "AllowedIPs") allowedIps = v;
     }
   }
 
@@ -72,7 +80,7 @@ export function parseWireGuardConfFromPanel(conf: string): ParsedPanelWgConf {
     throw new Error("incomplete wireguard conf for Amnezia export");
   }
 
-  return { privateKey, address, peerPublicKey, presharedKey, endpoint, awgNative };
+  return { privateKey, address, peerPublicKey, presharedKey, endpoint, allowedIps, mtu, awgNative };
 }
 
 function subnetBaseFromServerCidr(cidr: string): string {
@@ -93,12 +101,11 @@ function buildExportConfigText(
   parsed: ParsedPanelWgConf,
   awgFlat: Record<string, string>,
 ): string {
-  const lines: string[] = [
-    "[Interface]",
-    `Address = ${parsed.address}`,
-    "DNS = $PRIMARY_DNS, $SECONDARY_DNS",
-    `PrivateKey = ${parsed.privateKey}`,
-  ];
+  const lines: string[] = ["[Interface]", `Address = ${parsed.address}`];
+  if (parsed.mtu !== undefined && parsed.mtu.length > 0) {
+    lines.push(`MTU = ${parsed.mtu}`);
+  }
+  lines.push("DNS = $PRIMARY_DNS, $SECONDARY_DNS", `PrivateKey = ${parsed.privateKey}`);
   for (const k of AWG_CONF_LINE_ORDER) {
     const v = awgFlat[k] ?? "";
     lines.push(`${k} = ${v}`);
@@ -107,12 +114,7 @@ function buildExportConfigText(
   if (parsed.presharedKey.length > 0) {
     lines.push(`PresharedKey = ${parsed.presharedKey}`);
   }
-  lines.push(
-    "AllowedIPs = 0.0.0.0/0, ::/0",
-    `Endpoint = ${parsed.endpoint}`,
-    "PersistentKeepalive = 25",
-    "",
-  );
+  lines.push(`AllowedIPs = ${parsed.allowedIps}`, `Endpoint = ${parsed.endpoint}`, "PersistentKeepalive = 25", "");
   return lines.join("\n");
 }
 
@@ -139,14 +141,18 @@ export function buildAmneziaAwgVpnRoot(input: AmneziaAwgVpnRootInput): Record<st
   for (const k of AWG_JSON_PARAM_ORDER) {
     inner[k] = awgFlat[k] ?? "";
   }
-  inner.allowed_ips = ["0.0.0.0/0", "::/0"];
+  const allowedIpList = parsed.allowedIps
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  inner.allowed_ips = allowedIpList.length > 0 ? allowedIpList : ["0.0.0.0/0"];
   inner.clientId = input.clientPublicKey;
   inner.client_ip = addrHost;
   inner.client_priv_key = parsed.privateKey;
   inner.client_pub_key = input.clientPublicKey;
   inner.config = configStr;
   inner.hostName = input.hostName;
-  inner.mtu = "1376";
+  inner.mtu = parsed.mtu ?? "1280";
   inner.persistent_keep_alive = "25";
   inner.port = port;
   inner.psk_key = parsed.presharedKey;
