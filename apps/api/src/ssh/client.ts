@@ -20,6 +20,26 @@ export const SAFE_IFACE = /^(?:wg|awg)[0-9]+$/;
 export const SAFE_HOOK_PATH = /^\/[a-zA-Z0-9/_-]+\.sh$/;
 export const SAFE_COMPOSE_PATH = /^\/[a-zA-Z0-9/_.-]+\.(ya?ml)$/;
 
+export type WgCli = "wg" | "awg";
+
+/** Для awg* в Amnezia нужен бинарник `awg`, иначе `wg set` даёт fopen / netlink errors. */
+export async function dockerResolveWgCli(
+  auth: SshAuth,
+  container: string,
+  iface: string,
+): Promise<WgCli> {
+  assertNoShellInjection(container, SAFE_CONTAINER, "container");
+  assertNoShellInjection(iface, SAFE_IFACE, "iface");
+  if (!/^awg\d+$/.test(iface)) return "wg";
+  const r = await execRemote(
+    auth,
+    `docker exec ${shellQuote(container)} sh -c 'command -v awg >/dev/null 2>&1 && echo awg || echo wg'`,
+  );
+  if (r.code !== 0) return "wg";
+  const line = r.stdout.trim().split("\n")[0]?.trim() ?? "wg";
+  return line === "awg" ? "awg" : "wg";
+}
+
 export async function execRemote(
   auth: SshAuth,
   command: string,
@@ -70,9 +90,14 @@ export async function execRemote(
   });
 }
 
-export async function dockerExecWgGenkey(auth: SshAuth, container: string): Promise<string> {
+export async function dockerExecWgGenkey(
+  auth: SshAuth,
+  container: string,
+  cli: WgCli = "wg",
+): Promise<string> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
-  const cmd = `docker exec ${shellQuote(container)} wg genkey`;
+  if (cli !== "wg" && cli !== "awg") throw new Error("invalid wg cli");
+  const cmd = `docker exec ${shellQuote(container)} ${cli} genkey`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0) throw new Error(`wg genkey failed: ${r.stderr || r.stdout}`);
   return r.stdout.trim();
@@ -82,12 +107,14 @@ export async function dockerExecWgPubkey(
   auth: SshAuth,
   container: string,
   privateKey: string,
+  cli: WgCli = "wg",
 ): Promise<string> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
+  if (cli !== "wg" && cli !== "awg") throw new Error("invalid wg cli");
   if (!/^[A-Za-z0-9+/=_\n-]+$/.test(privateKey.trim())) {
     throw new Error("privateKey has unexpected characters");
   }
-  const cmd = `docker exec -i ${shellQuote(container)} wg pubkey`;
+  const cmd = `docker exec -i ${shellQuote(container)} ${cli} pubkey`;
   const r = await execRemote(auth, cmd, privateKey.trim() + "\n");
   if (r.code !== 0) throw new Error(`wg pubkey failed: ${r.stderr || r.stdout}`);
   return r.stdout.trim();
@@ -123,10 +150,12 @@ export async function dockerExecWgShowPublicKey(
   auth: SshAuth,
   container: string,
   iface: string,
+  cli: WgCli = "wg",
 ): Promise<string> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
-  const cmd = `docker exec ${shellQuote(container)} wg show ${shellQuote(iface)}`;
+  if (cli !== "wg" && cli !== "awg") throw new Error("invalid wg cli");
+  const cmd = `docker exec ${shellQuote(container)} ${cli} show ${shellQuote(iface)}`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
   const head = r.stdout.split(/\npeer:/i)[0] ?? r.stdout;
@@ -142,18 +171,25 @@ export async function dockerExecWgShowDump(
   auth: SshAuth,
   container: string,
   iface: string,
+  cli: WgCli = "wg",
 ): Promise<string> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
-  const cmd = `docker exec ${shellQuote(container)} wg show ${shellQuote(iface)}`;
+  if (cli !== "wg" && cli !== "awg") throw new Error("invalid wg cli");
+  const cmd = `docker exec ${shellQuote(container)} ${cli} show ${shellQuote(iface)}`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
   return r.stdout;
 }
 
-export async function dockerExecWgGenpsk(auth: SshAuth, container: string): Promise<string> {
+export async function dockerExecWgGenpsk(
+  auth: SshAuth,
+  container: string,
+  cli: WgCli = "wg",
+): Promise<string> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
-  const cmd = `docker exec ${shellQuote(container)} wg genpsk`;
+  if (cli !== "wg" && cli !== "awg") throw new Error("invalid wg cli");
+  const cmd = `docker exec ${shellQuote(container)} ${cli} genpsk`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0) throw new Error(`wg genpsk failed: ${r.stderr || r.stdout}`);
   const psk = r.stdout.trim();
@@ -168,19 +204,21 @@ export async function dockerExecWgSetPeer(
   clientPub: string,
   allowedIps: string,
   presharedKey?: string,
+  cli: WgCli = "wg",
 ): Promise<void> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
+  if (cli !== "wg" && cli !== "awg") throw new Error("invalid wg cli");
   if (!/^[A-Za-z0-9+/=]+$/.test(clientPub)) throw new Error("invalid client public key");
   if (!/^[\d./a-f:,]+$/.test(allowedIps)) throw new Error("invalid allowed ips");
   if (presharedKey !== undefined && !/^[A-Za-z0-9+/=]+$/.test(presharedKey)) {
     throw new Error("invalid preshared key");
   }
-  const pskPart =
+  const pskTail =
     presharedKey !== undefined && presharedKey.length > 0
-      ? `preshared-key ${shellQuote(presharedKey)} `
+      ? ` preshared-key ${shellQuote(presharedKey)}`
       : "";
-  const cmd = `docker exec ${shellQuote(container)} wg set ${shellQuote(iface)} peer ${shellQuote(clientPub)} ${pskPart}allowed-ips ${shellQuote(allowedIps)}`;
+  const cmd = `docker exec ${shellQuote(container)} ${cli} set ${shellQuote(iface)} peer ${shellQuote(clientPub)} allowed-ips ${shellQuote(allowedIps)}${pskTail}`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0) throw new Error(`wg set peer failed: ${r.stderr || r.stdout}`);
 }
@@ -190,11 +228,13 @@ export async function dockerExecWgRemovePeer(
   container: string,
   iface: string,
   clientPub: string,
+  cli: WgCli = "wg",
 ): Promise<void> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
+  if (cli !== "wg" && cli !== "awg") throw new Error("invalid wg cli");
   if (!/^[A-Za-z0-9+/=]+$/.test(clientPub)) throw new Error("invalid client public key");
-  const cmd = `docker exec ${shellQuote(container)} wg set ${shellQuote(iface)} peer ${shellQuote(clientPub)} remove`;
+  const cmd = `docker exec ${shellQuote(container)} ${cli} set ${shellQuote(iface)} peer ${shellQuote(clientPub)} remove`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0) throw new Error(`wg remove peer failed: ${r.stderr || r.stdout}`);
 }
