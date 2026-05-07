@@ -2,6 +2,7 @@ import type { CreateClientRequest } from "@amnesia-veb/shared";
 import {
   dockerContainerExists,
   dockerExecWgGenkey,
+  dockerExecWgGenpsk,
   dockerExecWgPubkey,
   dockerExecWgRemovePeer,
   dockerExecWgSetPeer,
@@ -37,7 +38,9 @@ export const sshWgDriver: VpnDriver = {
     const assignedIp = hostIpFromOctet(prefix, nextIpOctet);
     const allowed = `${assignedIp}/32`;
 
-    await dockerExecWgSetPeer(auth, server.docker_wg_container, iface, clientPub, allowed);
+    /** AmneziaWG / многие инсталляции ждут PSK в .conf; без него клиент импортируется, но туннель не поднимается. */
+    const psk = await dockerExecWgGenpsk(auth, server.docker_wg_container);
+    await dockerExecWgSetPeer(auth, server.docker_wg_container, iface, clientPub, allowed, psk);
 
     let awgNative: Record<string, string> | undefined;
     if (body.protocol === "amneziawg") {
@@ -52,7 +55,7 @@ export const sshWgDriver: VpnDriver = {
       serverPublicKey: serverPub.trim(),
       endpoint: server.endpoint_host,
       listenPort: body.listenPort,
-      security: body.security,
+      security: { ...body.security, presharedKey: psk },
       awgNativeParams: awgNative,
     });
 

@@ -151,18 +151,36 @@ export async function dockerExecWgShowDump(
   return r.stdout;
 }
 
+export async function dockerExecWgGenpsk(auth: SshAuth, container: string): Promise<string> {
+  assertNoShellInjection(container, SAFE_CONTAINER, "container");
+  const cmd = `docker exec ${shellQuote(container)} wg genpsk`;
+  const r = await execRemote(auth, cmd);
+  if (r.code !== 0) throw new Error(`wg genpsk failed: ${r.stderr || r.stdout}`);
+  const psk = r.stdout.trim();
+  if (!/^[A-Za-z0-9+/=]+$/.test(psk)) throw new Error("invalid wg genpsk output");
+  return psk;
+}
+
 export async function dockerExecWgSetPeer(
   auth: SshAuth,
   container: string,
   iface: string,
   clientPub: string,
   allowedIps: string,
+  presharedKey?: string,
 ): Promise<void> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
   if (!/^[A-Za-z0-9+/=]+$/.test(clientPub)) throw new Error("invalid client public key");
   if (!/^[\d./a-f:,]+$/.test(allowedIps)) throw new Error("invalid allowed ips");
-  const cmd = `docker exec ${shellQuote(container)} wg set ${shellQuote(iface)} peer ${shellQuote(clientPub)} allowed-ips ${shellQuote(allowedIps)}`;
+  if (presharedKey !== undefined && !/^[A-Za-z0-9+/=]+$/.test(presharedKey)) {
+    throw new Error("invalid preshared key");
+  }
+  const pskPart =
+    presharedKey !== undefined && presharedKey.length > 0
+      ? `preshared-key ${shellQuote(presharedKey)} `
+      : "";
+  const cmd = `docker exec ${shellQuote(container)} wg set ${shellQuote(iface)} peer ${shellQuote(clientPub)} ${pskPart}allowed-ips ${shellQuote(allowedIps)}`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0) throw new Error(`wg set peer failed: ${r.stderr || r.stdout}`);
 }
