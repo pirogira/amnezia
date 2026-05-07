@@ -137,6 +137,20 @@ export async function dockerExecWgShowPublicKey(
   return pk[1].trim();
 }
 
+/** Полный вывод `wg show IFACE` (разбор Amnezia-параметров для .conf). */
+export async function dockerExecWgShowDump(
+  auth: SshAuth,
+  container: string,
+  iface: string,
+): Promise<string> {
+  assertNoShellInjection(container, SAFE_CONTAINER, "container");
+  assertNoShellInjection(iface, SAFE_IFACE, "iface");
+  const cmd = `docker exec ${shellQuote(container)} wg show ${shellQuote(iface)}`;
+  const r = await execRemote(auth, cmd);
+  if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
+  return r.stdout;
+}
+
 export async function dockerExecWgSetPeer(
   auth: SshAuth,
   container: string,

@@ -1,5 +1,76 @@
 import type { SecurityProfile } from "@amnesia-veb/shared";
 
+/** Ключи из `wg show` (нижний регистр) → имена в .conf AmneziaWG. */
+const AWG_WGSHOW_TO_CONF: Record<string, string> = {
+  jc: "Jc",
+  jmin: "Jmin",
+  jmax: "Jmax",
+  s1: "S1",
+  s2: "S2",
+  s3: "S3",
+  s4: "S4",
+  h1: "H1",
+  h2: "H2",
+  h3: "H3",
+  h4: "H4",
+  i1: "I1",
+  i2: "I2",
+  i3: "I3",
+  i4: "I4",
+  i5: "I5",
+};
+
+const AWG_CONF_LINE_ORDER = [
+  "Jc",
+  "Jmin",
+  "Jmax",
+  "S1",
+  "S2",
+  "S3",
+  "S4",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "I1",
+  "I2",
+  "I3",
+  "I4",
+  "I5",
+] as const;
+
+/**
+ * Парсит блок интерфейса из `wg show` (до первого peer:) — значения для «родного» AmneziaWG .conf.
+ */
+export function parseAwgParamsFromWgShow(dump: string): Record<string, string> {
+  const peerIdx = dump.search(/\npeer:/i);
+  const head = peerIdx >= 0 ? dump.slice(0, peerIdx) : dump;
+  const out: Record<string, string> = {};
+  for (const line of head.split("\n")) {
+    const m = /^\s*([^:]+):\s*(.+)$/.exec(line);
+    if (!m) continue;
+    const raw = m[1].trim().toLowerCase().replace(/\s+/g, "");
+    const confKey = AWG_WGSHOW_TO_CONF[raw];
+    if (!confKey) continue;
+    out[confKey] = m[2].trim();
+  }
+  return out;
+}
+
+export function formatAwgInterfaceLines(params: Record<string, string>): string {
+  const lines: string[] = [];
+  for (const k of AWG_CONF_LINE_ORDER) {
+    const v = params[k];
+    if (v !== undefined && v.length > 0) lines.push(`${k} = ${v}`);
+  }
+  for (const [k, v] of Object.entries(params)) {
+    if ((AWG_CONF_LINE_ORDER as readonly string[]).includes(k)) continue;
+    if (v.length > 0) lines.push(`${k} = ${v}`);
+  }
+  if (!lines.length) return "";
+  return `${lines.join("\n")}\n`;
+}
+
 export function buildClientConf(params: {
   clientPrivateKey: string;
   assignedIp: string;
@@ -7,6 +78,8 @@ export function buildClientConf(params: {
   endpoint: string;
   listenPort: number;
   security: SecurityProfile;
+  /** Параметры AmneziaWG с сервера (`wg show`); только для протокола amneziawg. */
+  awgNativeParams?: Record<string, string>;
 }): string {
   const dnsLine = params.security.dns
     ? `DNS = ${params.security.dns}\n`
@@ -14,11 +87,13 @@ export function buildClientConf(params: {
   const psk = params.security.presharedKey
     ? `PresharedKey = ${params.security.presharedKey}\n`
     : "";
-  const junkLines = formatJunkComments(params.security);
+  const native = Boolean(params.awgNativeParams && Object.keys(params.awgNativeParams).length > 0);
+  const junkLines = native ? "" : formatJunkComments(params.security);
+  const awgLines = native && params.awgNativeParams ? formatAwgInterfaceLines(params.awgNativeParams) : "";
   return `[Interface]
 PrivateKey = ${params.clientPrivateKey}
 Address = ${params.assignedIp}/32
-${dnsLine}${junkLines}[Peer]
+${dnsLine}${junkLines}${awgLines}[Peer]
 PublicKey = ${params.serverPublicKey}
 ${psk}AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = ${params.endpoint}:${params.listenPort}
