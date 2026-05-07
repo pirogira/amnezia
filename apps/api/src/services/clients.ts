@@ -6,6 +6,7 @@ import { getEncryptionMaster } from "../cryptoEnv.js";
 import { getDriver } from "../drivers/index.js";
 import { parseSubnetLastOctets } from "../wgConf.js";
 import { buildAmneziaVpnUriForAwgClient } from "../amneziaVpnUri.js";
+import { sshDetectVpnSubnetCidr } from "../ssh/tunnelSubnet.js";
 import { buildVlessRealityUri, parseVlessRealityJson } from "../vlessUri.js";
 import type { ServerRow } from "../drivers/types.js";
 
@@ -79,13 +80,19 @@ export async function createVpnClient(server: ServerRow, body: CreateClientReque
   }
 
   const driver = getDriver(server);
-  const octet = nextOctetForServer(server.id, server.vpn_subnet_cidr);
+  const detectedCidr = await sshDetectVpnSubnetCidr(server);
+  const effectiveCidr = detectedCidr ?? server.vpn_subnet_cidr;
+  const serverForWg =
+    detectedCidr != null && detectedCidr !== server.vpn_subnet_cidr
+      ? { ...server, vpn_subnet_cidr: effectiveCidr }
+      : server;
+  const octet = nextOctetForServer(server.id, effectiveCidr);
   if (octet > 254) throw new Error("subnet exhausted");
 
   const decryptSshKey = () =>
     decryptSecret(server.ssh_private_key_enc, getEncryptionMaster());
 
-  const created = await driver.createClient(server, body, decryptSshKey, octet);
+  const created = await driver.createClient(serverForWg, body, decryptSshKey, octet);
   const id = randomUUID();
   const now = new Date().toISOString();
   const privEnc = encryptSecret(created.privateKey, getEncryptionMaster());
@@ -118,7 +125,7 @@ export async function createVpnClient(server: ServerRow, body: CreateClientReque
     try {
       vpnUri = buildAmneziaVpnUriForAwgClient(
         server.name,
-        server,
+        serverForWg,
         body.listenPort,
         created.publicKey,
         created.clientConf,

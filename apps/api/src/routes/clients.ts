@@ -126,7 +126,7 @@ export async function clientRoutes(app: FastifyInstance): Promise<void> {
     const row = getDb()
       .prepare(
         `SELECT c.protocol, c.client_conf_enc, c.public_key, c.listen_port, c.security_json, c.revoked_at,
-                s.name as server_name, s.endpoint_host, s.docker_wg_container, s.vpn_subnet_cidr
+                s.name as server_name, s.endpoint_host, s.docker_wg_container
          FROM vpn_clients c JOIN vpn_servers s ON c.server_id = s.id WHERE c.id = ?`,
       )
       .get(clientId) as
@@ -140,7 +140,6 @@ export async function clientRoutes(app: FastifyInstance): Promise<void> {
           server_name: string;
           endpoint_host: string;
           docker_wg_container: string;
-          vpn_subnet_cidr: string;
         }
       | undefined;
     if (!row || row.revoked_at) return reply.code(404).send({ error: "not_found" });
@@ -161,7 +160,6 @@ export async function clientRoutes(app: FastifyInstance): Promise<void> {
         {
           endpoint_host: row.endpoint_host,
           docker_wg_container: row.docker_wg_container,
-          vpn_subnet_cidr: row.vpn_subnet_cidr,
         },
         row.listen_port,
         row.public_key,

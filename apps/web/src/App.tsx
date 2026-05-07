@@ -708,7 +708,7 @@ function ClientForm(props: {
       )}
       {protocol === "amneziawg" && (
         <p className="muted" style={{ width: "100%", fontSize: "0.85rem" }}>
-          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code>. По умолчанию в туннель уходит только IPv4 (<code>0.0.0.0/0</code>) и MTU 1280 — так стабильнее, если на сервере нет IPv6/NAT. После создания также выдаётся <code>vpn://…</code> для приложения Amnezia.
+          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code>. По умолчанию только IPv4 (<code>0.0.0.0/0</code>) и MTU 1280. Подсеть клиента берётся с интерфейса в Docker (<code>ip addr</code>), если в карточке сервера CIDR другой — иначе часто «VPN подключён, интернета нет». После создания — <code>vpn://…</code>.
         </p>
       )}
       <div className="field">

@@ -83,9 +83,10 @@ export function parseWireGuardConfFromPanel(conf: string): ParsedPanelWgConf {
   return { privateKey, address, peerPublicKey, presharedKey, endpoint, allowedIps, mtu, awgNative };
 }
 
-function subnetBaseFromServerCidr(cidr: string): string {
-  const m = /^(\d+\.\d+\.\d+)\.\d+\/\d+$/.exec(cidr.trim());
-  if (!m) throw new Error("only /24 style CIDR supported for Amnezia vpn://");
+/** `10.8.1.5/32` → `10.8.1.0` как в официальном экспорте Amnezia. */
+function subnetAddressDotZeroFromClientAddress(addressWithMask: string): string {
+  const m = /^(\d+\.\d+\.\d+)\.\d+\/\d+$/.exec(addressWithMask.trim());
+  if (!m) throw new Error("client Address must be IPv4 with mask");
   return `${m[1]}.0`;
 }
 
@@ -125,7 +126,6 @@ export type AmneziaAwgVpnRootInput = {
   dns2: string;
   dockerContainer: string;
   listenPort: number;
-  vpnSubnetCidr: string;
   clientPublicKey: string;
   clientConfPlain: string;
 };
@@ -165,7 +165,7 @@ export function buildAmneziaAwgVpnRoot(input: AmneziaAwgVpnRootInput): Record<st
   awgTop.last_config = lastConfig;
   awgTop.port = String(port);
   awgTop.protocol_version = "2";
-  awgTop.subnet_address = subnetBaseFromServerCidr(input.vpnSubnetCidr);
+  awgTop.subnet_address = subnetAddressDotZeroFromClientAddress(parsed.address);
   awgTop.transport_proto = "udp";
   return {
     containers: [{ awg: awgTop, container: input.dockerContainer }],
@@ -192,7 +192,6 @@ export function buildAmneziaVpnUriForAwgClient(
   server: {
     endpoint_host: string;
     docker_wg_container: string;
-    vpn_subnet_cidr: string;
   },
   listenPort: number,
   clientPublicKey: string,
@@ -208,7 +207,6 @@ export function buildAmneziaVpnUriForAwgClient(
     dns2,
     dockerContainer: server.docker_wg_container,
     listenPort,
-    vpnSubnetCidr: server.vpn_subnet_cidr,
     clientPublicKey,
     clientConfPlain,
   });

@@ -156,6 +156,24 @@ export async function dockerResolveWgIface(auth: SshAuth, container: string, pre
   return names[0];
 }
 
+/**
+ * Первые три октета подсети /24 с интерфейса в контейнере (например `10.8.1` из `10.8.1.1/24`).
+ * Нужно, чтобы IP клиента совпадали с подсетью NAT Amnezia, а не с ошибочным CIDR в карточке панели.
+ */
+export async function dockerDetectIfaceSlash24Prefix(
+  auth: SshAuth,
+  container: string,
+  iface: string,
+): Promise<string | null> {
+  assertNoShellInjection(container, SAFE_CONTAINER, "container");
+  assertNoShellInjection(iface, SAFE_IFACE, "iface");
+  const cmd = `docker exec ${shellQuote(container)} ip -4 -o addr show dev ${shellQuote(iface)} 2>/dev/null || true`;
+  const r = await execRemote(auth, cmd);
+  const m = /\binet\s+(\d+\.\d+\.\d+)\.\d+\/(24)\b/.exec(r.stdout);
+  if (!m) return null;
+  return m[1];
+}
+
 export async function dockerExecWgShowPublicKey(
   auth: SshAuth,
   container: string,
