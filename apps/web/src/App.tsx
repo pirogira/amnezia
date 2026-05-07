@@ -130,6 +130,7 @@ export function App() {
       <div className="layout">
         <h1 className="h1">Amnezia panel</h1>
         <p className="muted">Вход администратора</p>
+        <LoginPortWarning />
         <LoginForm onLogin={login} error={err} setError={setErr} />
       </div>
     );
@@ -152,6 +153,9 @@ export function App() {
           onCreated={async () => {
             const list = await api<Server[]>("/api/servers");
             setServers(list);
+            setActiveServerId((prev) =>
+              prev && list.some((s) => s.id === prev) ? prev : (list[0]?.id ?? null),
+            );
           }}
         />
         <div style={{ marginTop: "0.75rem" }}>
@@ -159,12 +163,17 @@ export function App() {
           <select
             value={activeServerId ?? ""}
             onChange={(e) => setActiveServerId(e.target.value || null)}
+            disabled={servers.length === 0}
           >
-            {servers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} ({s.driverMode})
-              </option>
-            ))}
+            {servers.length === 0 ? (
+              <option value="">— добавьте сервер выше —</option>
+            ) : (
+              servers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.driverMode})
+                </option>
+              ))
+            )}
           </select>
         </div>
       </div>
@@ -264,6 +273,39 @@ type LoginInfo = {
   devPassword: string | null;
   helpRu: string;
 };
+
+/** Порт 5173 — это Vite (dev). На VPS панель из Docker обычно на 8443 (HTTPS) или 8080 (HTTP). */
+function LoginPortWarning() {
+  if (typeof window === "undefined") return null;
+  const { port, hostname } = window.location;
+  if (port !== "5173") return null;
+  if (hostname === "localhost" || hostname === "127.0.0.1") return null;
+  const https8443 = `https://${hostname}:8443/`;
+  const http8080 = `http://${hostname}:8080/`;
+  return (
+    <div
+      className="card"
+      style={{
+        marginBottom: "1rem",
+        borderColor: "#b45309",
+        background: "#1a1410",
+      }}
+    >
+      <p className="error" style={{ margin: "0 0 0.5rem" }}>
+        Вы открыли порт <strong>5173</strong> — это режим <strong>разработки (Vite)</strong>, а не панель из Docker на
+        сервере.
+      </p>
+      <p className="muted" style={{ margin: "0 0 0.5rem", fontSize: "0.9rem" }}>
+        Пароль из установки подходит к панели на порту из <code>install.sh</code> (часто <strong>8443</strong> HTTPS
+        или <strong>8080</strong> HTTP). Смотрите файл <code>panel-credentials.txt</code> на VPS — там точный URL.
+      </p>
+      <p style={{ margin: 0, fontSize: "0.9rem" }}>
+        Попробуйте:{" "}
+        <a href={https8443}>{https8443}</a> или <a href={http8080}>{http8080}</a>
+      </p>
+    </div>
+  );
+}
 
 function LoginForm(props: {
   onLogin: (u: string, p: string) => Promise<void>;
