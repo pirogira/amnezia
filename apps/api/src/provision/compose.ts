@@ -25,7 +25,7 @@ export function buildProvisionComposeYaml(): string {
    * `privileged: true` — иначе на Ubuntu Docker часто `Permission denied` на `/proc/1/ns/mnt`
    * (AppArmor/политика), даже при CAP_SYS_ADMIN.
    */
-  /** awg-quick из amneziawg-tools: короткое имя `awg0` → `/etc/amnezia/amneziawg/awg0.conf`, у нас конфиг в `/etc/wireguard`. */
+  /** Два mount: явный путь `/etc/wireguard/…` и путь amneziawg-tools для `awg-quick up awg0` → `/etc/amnezia/amneziawg/awg0.conf`. */
   const awgConfInContainer = "/etc/wireguard/awg0.conf";
   return `services:
   ${PROVISION_CONTAINER_NAME}:
@@ -40,6 +40,7 @@ export function buildProvisionComposeYaml(): string {
       - /dev/net/tun
     volumes:
       - ${PROVISION_AWG_DIR}:/etc/wireguard
+      - ${PROVISION_AWG_DIR}:/etc/amnezia/amneziawg
     command:
       - /bin/sh
       - -c

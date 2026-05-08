@@ -23,6 +23,7 @@ import {
   stepEnsureDocker,
   stepWaitWgShow,
   stepWriteProvisionFiles,
+  stepWriteProvisionSidecars,
 } from "./steps.js";
 
 export type ProvisionFormInput = {
@@ -44,6 +45,7 @@ const STEP_LABELS: Record<string, string> = {
   ensure_docker: "Установка Docker (при необходимости)",
   ip_forward: "Включение IPv4 forwarding",
   write_files: "Запись awg0.conf и docker-compose",
+  write_sidecars: "Обновление docker-compose и panel-nat",
   compose_up: "docker compose up",
   wait_wg: "Ожидание интерфейса WireGuard",
   resolve_iface: "Определение интерфейса",
@@ -228,13 +230,13 @@ export async function runProvisionAmneziaAwg(
   }
 
   const exists = await dockerContainerExists(auth, PROVISION_CONTAINER_NAME);
-  totalSteps = exists ? 5 : 7;
+  totalSteps = 7;
   emit?.({
     event: "plan",
     totalSteps,
     reusedContainer: exists,
     message: exists
-      ? "Контейнер уже есть — короткий сценарий."
+      ? "Контейнер уже есть — обновим compose/NAT и пересоздадим сервис."
       : "Полная установка Docker и контейнера.",
   });
   log?.info({ totalSteps, reusedContainer: exists }, "provision_plan");
@@ -257,6 +259,16 @@ export async function runProvisionAmneziaAwg(
       ok: true,
       detail: "Используется существующий amnezia-awg",
     }));
+
+    const composeYamlReuse = buildProvisionComposeYaml();
+    const natScriptReuse = buildPanelWgNatScript();
+    dr = await runStep("write_sidecars", () =>
+      stepWriteProvisionSidecars(auth, composeYamlReuse, natScriptReuse),
+    );
+    if (!dr.ok) return { ok: false, steps, message: dr.message };
+
+    dr = await runStep("compose_up", () => stepDockerComposeUp(auth, { forceRecreate: true }));
+    if (!dr.ok) return { ok: false, steps, message: dr.message };
 
     dr = await runStep("resolve_iface", async () => {
       try {

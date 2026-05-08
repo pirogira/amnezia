@@ -97,13 +97,40 @@ chmod 755 ${shellQuote(natHostPath)}
   return { ok: true };
 }
 
-export async function stepDockerComposeUp(auth: SshAuth): Promise<StepResult> {
+export async function stepDockerComposeUp(
+  auth: SshAuth,
+  opts?: { forceRecreate?: boolean },
+): Promise<StepResult> {
+  const flags = opts?.forceRecreate ? " --force-recreate" : "";
   const r = await execRemote(
     auth,
-    `docker compose -f ${shellQuote(PROVISION_COMPOSE_PATH)} up -d`,
+    `docker compose -f ${shellQuote(PROVISION_COMPOSE_PATH)} up -d${flags}`,
   );
   if (r.code !== 0) {
     return { ok: false, message: `docker compose up: ${trimCmdOut(r.stderr || r.stdout)}` };
+  }
+  return { ok: true };
+}
+
+/** Только compose + panel-nat (без awg0.conf) — при повторном провижне с уже существующим контейнером. */
+export async function stepWriteProvisionSidecars(
+  auth: SshAuth,
+  composeYaml: string,
+  natScript: string,
+): Promise<StepResult> {
+  const b64Compose = Buffer.from(composeYaml, "utf8").toString("base64");
+  const b64Nat = Buffer.from(natScript, "utf8").toString("base64");
+  const natHostPath = `${PROVISION_AWG_DIR}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
+  const script = `set -euo pipefail
+install -d -m 755 ${PROVISION_AWG_DIR}
+echo ${shellQuote(b64Compose)} | base64 -d > ${PROVISION_COMPOSE_PATH}
+chmod 644 ${PROVISION_COMPOSE_PATH}
+echo ${shellQuote(b64Nat)} | base64 -d > ${shellQuote(natHostPath)}
+chmod 755 ${shellQuote(natHostPath)}
+`;
+  const r = await execRemote(auth, `bash -lc ${shellQuote(script)}`);
+  if (r.code !== 0) {
+    return { ok: false, message: `Запись compose/NAT: ${trimCmdOut(r.stderr || r.stdout)}` };
   }
   return { ok: true };
 }
