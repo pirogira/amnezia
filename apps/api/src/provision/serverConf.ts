@@ -1,4 +1,5 @@
 import { formatAwgInterfaceLines, hostIpFromOctet, parseSubnetLastOctets } from "../wgConf.js";
+import { PANEL_WG_NAT_SCRIPT_BASENAME } from "./panelNatScript.js";
 
 export function buildAwg0ServerConf(params: {
   serverPrivateKey: string;
@@ -7,9 +8,8 @@ export function buildAwg0ServerConf(params: {
   awgParams: Record<string, string>;
   /**
    * Без PostUp клиенты устанавливают WG, но трафик в интернет не NATится.
-   * `-I FORWARD 1` / `-I POSTROUTING 1`: при UFW политика FORWARD часто DROP, а `-A` в конец
-   * цепочки не спасает — пакеты не доходят до наших ACCEPT. MASQUERADE по `-s VPN/24` без `-o`.
-   * rp_filter=0 на awg0 снимает обрыв форварда на VPS со strict reverse-path.
+   * Скрипт `panel-nat.sh`: `-I FORWARD 1` / `-I POSTROUTING 1` (UFW), выбор iptables-legacy,
+   * `%i` = имя интерфейса, rp_filter на туннеле.
    */
   omitPostUp?: boolean;
 }): string {
@@ -20,8 +20,8 @@ export function buildAwg0ServerConf(params: {
   const nat =
     params.omitPostUp === true
       ? ""
-      : `PostUp = sysctl -w net.ipv4.conf.awg0.rp_filter=0 2>/dev/null || true; iptables -I FORWARD 1 -i awg0 -j ACCEPT; iptables -I FORWARD 1 -o awg0 -j ACCEPT; iptables -t nat -I POSTROUTING 1 -s ${subnet24} ! -d ${subnet24} -j MASQUERADE
-PostDown = iptables -t nat -D POSTROUTING -s ${subnet24} ! -d ${subnet24} -j MASQUERADE; iptables -D FORWARD -o awg0 -j ACCEPT; iptables -D FORWARD -i awg0 -j ACCEPT; sysctl -w net.ipv4.conf.awg0.rp_filter=2 2>/dev/null || true
+      : `PostUp = /bin/sh /etc/wireguard/${PANEL_WG_NAT_SCRIPT_BASENAME} up %i ${subnet24}
+PostDown = /bin/sh /etc/wireguard/${PANEL_WG_NAT_SCRIPT_BASENAME} down %i ${subnet24}
 `;
   return `[Interface]
 PrivateKey = ${params.serverPrivateKey}

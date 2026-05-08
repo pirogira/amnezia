@@ -12,6 +12,7 @@ import {
   PROVISION_COMPOSE_PATH,
   PROVISION_AWG_DIR,
 } from "./compose.js";
+import { PANEL_WG_NAT_SCRIPT_BASENAME } from "./panelNatScript.js";
 
 export type StepResult = { ok: true; detail?: string } | { ok: false; message: string };
 
@@ -74,15 +75,20 @@ export async function stepWriteProvisionFiles(
   auth: SshAuth,
   composeYaml: string,
   awg0Conf: string,
+  natScript: string,
 ): Promise<StepResult> {
   const b64Compose = Buffer.from(composeYaml, "utf8").toString("base64");
   const b64Conf = Buffer.from(awg0Conf, "utf8").toString("base64");
+  const b64Nat = Buffer.from(natScript, "utf8").toString("base64");
+  const natHostPath = `${PROVISION_AWG_DIR}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
   const script = `set -euo pipefail
 install -d -m 755 ${PROVISION_AWG_DIR}
 echo ${shellQuote(b64Compose)} | base64 -d > ${PROVISION_COMPOSE_PATH}
 chmod 644 ${PROVISION_COMPOSE_PATH}
 echo ${shellQuote(b64Conf)} | base64 -d > ${PROVISION_AWG_CONF}
 chmod 600 ${PROVISION_AWG_CONF}
+echo ${shellQuote(b64Nat)} | base64 -d > ${shellQuote(natHostPath)}
+chmod 755 ${shellQuote(natHostPath)}
 `;
   const r = await execRemote(auth, `bash -lc ${shellQuote(script)}`);
   if (r.code !== 0) {

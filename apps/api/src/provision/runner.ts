@@ -13,6 +13,7 @@ import {
   PROVISION_CONTAINER_NAME,
 } from "./compose.js";
 import { generateAwgObfuscationParams, generateWgServerKeypair } from "./keys.js";
+import { buildPanelWgNatScript } from "./panelNatScript.js";
 import { buildAwg0ServerConf } from "./serverConf.js";
 import {
   type StepResult,
@@ -349,8 +350,9 @@ export async function runProvisionAmneziaAwg(
     return { ok: false, steps, message: msg };
   }
   const composeYaml = buildProvisionComposeYaml();
+  const natScript = buildPanelWgNatScript();
 
-  dr = await runStep("write_files", () => stepWriteProvisionFiles(auth, composeYaml, awg0Conf));
+  dr = await runStep("write_files", () => stepWriteProvisionFiles(auth, composeYaml, awg0Conf, natScript));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
 
   dr = await runStep("compose_up", () => stepDockerComposeUp(auth));
