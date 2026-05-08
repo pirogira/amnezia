@@ -16,6 +16,8 @@ export function buildProvisionComposeYaml(): string {
    * После `*-quick up` нужен долгоживущий PID 1: `wg-quick` сразу завершается — без `tail`
    * контейнер выходит; `trap` на SIGTERM/SIGINT вызывает `*-quick down`, чтобы не оставлять
    * правила iptables на хосте.
+   * Не задавать sysctls здесь: при network_mode: host runc отклоняет net.ipv4.ip_forward.
+   * Включение forwarding на VPS делает stepEnableIpv4Forward до compose up.
    */
   return `services:
   ${PROVISION_CONTAINER_NAME}:
@@ -26,8 +28,6 @@ export function buildProvisionComposeYaml(): string {
       - NET_ADMIN
     devices:
       - /dev/net/tun
-    sysctls:
-      - net.ipv4.ip_forward=1
     volumes:
       - ${PROVISION_AWG_DIR}:/etc/wireguard
     command:
