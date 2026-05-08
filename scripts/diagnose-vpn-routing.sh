@@ -158,4 +158,4 @@ echo "C) П.11 transfer не растёт при серфинге → порт/�
 echo "D) П.11 transfer растёт, сайтов нет → DNS на клиенте или блок у оператора."
 echo "E) pid_mode не host → в compose pid: host."
 echo "F) Дубликаты MASQUERADE (П.7) — после стабилизации: остановить контейнер, awg-quick down, цикл iptables-legacy -D … или один чистый пересоздать правила."
-echo "G) П.7 MASQUERADE 0 bytes, а П.16 (nft nat) растёт — SNAT в nft; тогда либо оставить как есть (если интернет есть), либо выровнять правила под один backend."
+echo "G) П.7 legacy MASQUERADE 0, в П.16/17 nft нет 10.8.x — без SNAT в nft интернета не будет; panel-nat должен писать MASQUERADE через «iptables» (nf_tables), не только legacy."
