@@ -1,29 +1,45 @@
 import { randomInt } from "node:crypto";
 import { x25519 } from "@noble/curves/ed25519.js";
 
-/** Magic header H1–H4: десятичные uint32, как в Amnezia / `wg setconf` (hex-строка даёт Unable to parse H1). */
-function randMagicHeader(): string {
-  return String(randomInt(10_000, 4_000_000_000));
+/**
+ * Диапазоны как у AmneziaWG 2.0 (см. bivlked/amneziawg-installer ADVANCED: Jmin 40–89, S3/S4, S1+56≠S2, разные H1–H4).
+ * Десятичные uint32 для H* (не hex) — иначе `wg setconf` в контейнере падает.
+ */
+const H_MAGIC_MIN = 100_000;
+const H_MAGIC_MAX_EXCLUSIVE = 2_000_000_001;
+
+function fourDistinctMagicHeaders(): [string, string, string, string] {
+  const seen = new Set<number>();
+  while (seen.size < 4) {
+    seen.add(randomInt(H_MAGIC_MIN, H_MAGIC_MAX_EXCLUSIVE));
+  }
+  const arr = [...seen];
+  return [String(arr[0]), String(arr[1]), String(arr[2]), String(arr[3])];
 }
 
-/** Случайные параметры AmneziaWG в формате строк для .conf (как у типичного клиента Amnezia). */
+/** Случайные параметры AmneziaWG 2.0 для .conf (сервер и клиенты должны совпадать). */
 export function generateAwgObfuscationParams(): Record<string, string> {
-  const jc = String(randomInt(3, 6));
-  const jminN = randomInt(10, 35);
+  const jc = String(randomInt(3, 7));
+  const jminN = randomInt(40, 90);
   const jmin = String(jminN);
-  const jmax = String(randomInt(Math.max(50, jminN + 15), 130));
-  const s1 = String(randomInt(0, 256));
-  const s2 = String(randomInt(0, 256));
-  const h1 = randMagicHeader();
-  const h2 = randMagicHeader();
-  const h3 = randMagicHeader();
-  const h4 = randMagicHeader();
+  const jmax = String(randomInt(jminN + 50, jminN + 251));
+  let s1N = randomInt(15, 151);
+  let s2N = randomInt(15, 151);
+  if (s1N + 56 === s2N) {
+    s2N = s1N + 57 <= 150 ? s1N + 57 : s1N - 1;
+    if (s2N < 15) s2N = 15;
+  }
+  const s3 = String(randomInt(8, 56));
+  const s4 = String(randomInt(4, 28));
+  const [h1, h2, h3, h4] = fourDistinctMagicHeaders();
   return {
     Jc: jc,
     Jmin: jmin,
     Jmax: jmax,
-    S1: s1,
-    S2: s2,
+    S1: String(s1N),
+    S2: String(s2N),
+    S3: s3,
+    S4: s4,
     H1: h1,
     H2: h2,
     H3: h3,
