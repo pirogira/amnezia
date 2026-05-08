@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Запускать НА VPS по SSH (bash diagnose-vpn-routing.sh).
-# Желательно: один раз с выключенным VPN на клиенте, второй — с включённым (чтобы сравнить счётчики iptables).
+# Запускать НА VPS по SSH: bash diagnose-vpn-routing.sh
+#
+# Перед запуском: ВКЛЮЧИТЕ VPN на телефоне/ПК, 5–10 сек пооткрывайте сайты (или ping 1.1.1.1),
+# затем выполните скрипт — так по счётчикам iptables видно, доходит ли трафик до хоста.
+#
 # Переменные: WG_CONTAINER (по умолчанию amnezia-awg), WG_IFACE (по умолчанию awg0).
 
 set -uo pipefail
@@ -8,91 +11,112 @@ set -uo pipefail
 CONTAINER="${WG_CONTAINER:-amnezia-awg}"
 IFACE="${WG_IFACE:-awg0}"
 
-echo "=== 1) Базовая связность хоста (без VPN с клиента это не проверяет туннель) ==="
+echo "=== 0) Инструкция ==="
+echo "VPN на клиенте должен быть ВКЛЮЧЁН во время сбора (кроме отдельного теста по желанию)."
+echo ""
+
+echo "=== 1) Базовая связность хоста VPS ==="
 date -Is
-ping -c 2 -W 3 1.1.1.1 2>&1 || echo "(ping с VPS наружу не удался — сначала почините исход с самой VPS)"
+ping -c 2 -W 3 1.1.1.1 2>&1 || echo "(ping с VPS наружу не удался)"
 
 echo ""
-echo "=== 2) IPv4 forwarding (должно быть 1 для раздачи интернета клиентам) ==="
+echo "=== 2) IPv4 forwarding ==="
 sysctl net.ipv4.ip_forward 2>&1 || true
 
 echo ""
-echo "=== 3) UFW (если active — часто режет FORWARD до наших правил) ==="
-if command -v ufw >/dev/null 2>&1; then
-  ufw status verbose 2>&1 || true
-else
-  echo "ufw не установлен"
-fi
+echo "=== 3) rp_filter (на awg0 часто нужен 0 для форварда) ==="
+sysctl "net.ipv4.conf.${IFACE}.rp_filter" 2>/dev/null || echo "(нет sysctl для ${IFACE} — интерфейс не поднят?)"
+sysctl net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter 2>/dev/null || true
 
 echo ""
-echo "=== 4) Docker: контейнер VPN ==="
+echo "=== 4) Docker: контейнер, сеть, PID, capabilities ==="
 docker ps -a --filter "name=${CONTAINER}" --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' 2>&1 || true
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   echo "network_mode: $(docker inspect -f '{{.HostConfig.NetworkMode}}' "$CONTAINER" 2>/dev/null)"
   echo "pid_mode: $(docker inspect -f '{{.HostConfig.PidMode}}' "$CONTAINER" 2>/dev/null)"
+  echo "cap_add: $(docker inspect -f '{{.HostConfig.CapAdd}}' "$CONTAINER" 2>/dev/null)"
+  echo "privileged: $(docker inspect -f '{{.HostConfig.Privileged}}' "$CONTAINER" 2>/dev/null)"
 fi
 
 echo ""
-echo "=== 4b) nsenter + хостовый iptables-legacy (нужны pid:host и SYS_ADMIN в compose) ==="
-docker exec "$CONTAINER" sh -c 'command -v nsenter; nsenter -t 1 -m test -x /usr/sbin/iptables-legacy && nsenter -t 1 -m -- /usr/sbin/iptables-legacy -V' 2>&1 || echo "exec failed"
+echo "=== 5) Из контейнера: nsenter + хостовый iptables-legacy (должно быть без ошибок) ==="
+docker exec "$CONTAINER" sh -c '
+  echo -n "nsenter: "; command -v nsenter || echo "нет"
+  echo -n "test -x /usr/sbin/iptables-legacy в mount-ns PID1: "
+  if nsenter -t 1 -m test -x /usr/sbin/iptables-legacy 2>/dev/null; then echo ok; else echo FAIL; fi
+  nsenter -t 1 -m -- /usr/sbin/iptables-legacy -V 2>&1 || echo "iptables-legacy -V failed"
+' 2>&1 || echo "docker exec failed (контейнер не запущен?)"
 
 echo ""
-echo "=== 5) Интерфейс ${IFACE} на хосте (network_mode: host — интерфейс на хосте) ==="
-ip -brief link show "${IFACE}" 2>&1 || echo "интерфейса ${IFACE} нет (контейнер не поднял туннель?)"
+echo "=== 6) Из контейнера: legacy FORWARD (через nsenter), первые строки ==="
+docker exec "$CONTAINER" sh -c 'nsenter -t 1 -m -- /usr/sbin/iptables-legacy -L FORWARD -n -v --line-numbers 2>&1 | head -35' 2>&1 || echo "exec failed"
 
 echo ""
-echo "=== 6) awg/wg show внутри контейнера (handshake, listening port, transfer) ==="
-if docker exec "$CONTAINER" true 2>/dev/null; then
-  EXE=wg
-  if docker exec "$CONTAINER" sh -c 'command -v awg' >/dev/null 2>&1; then EXE=awg; fi
-  docker exec "$CONTAINER" "$EXE" show "$IFACE" 2>&1 || echo "wg/awg show failed"
+echo "=== 7) Из контейнера: legacy NAT POSTROUTING (через nsenter) ==="
+docker exec "$CONTAINER" sh -c 'nsenter -t 1 -m -- /usr/sbin/iptables-legacy -t nat -L POSTROUTING -n -v --line-numbers 2>&1 | head -30' 2>&1 || echo "exec failed"
+
+echo ""
+echo "=== 8) Счётчики: сколько строк с ${IFACE} в legacy FORWARD ==="
+if command -v iptables-legacy >/dev/null 2>&1; then
+  echo -n "на хосте (iptables-legacy): "
+  iptables-legacy -L FORWARD -n -v 2>&1 | grep -c "${IFACE}" || true
 else
-  echo "docker exec ${CONTAINER}: контейнер не найден или не запущен"
+  echo "iptables-legacy нет на хосте"
 fi
 
 echo ""
-echo "=== 7) Скрипт NAT от панели (если provision новый) ==="
+echo "=== 9) awg0.conf: строки PostUp / PostDown (с хоста) ==="
+for f in /opt/amnezia/awg/awg0.conf /opt/amnesia/awg/awg0.conf; do
+  if [[ -f "$f" ]]; then
+    echo "--- $f ---"
+    grep -E '^Post(Up|Down)|^ListenPort|^Address' "$f" 2>/dev/null || true
+  fi
+done
+
+echo ""
+echo "=== 10) panel-nat.sh (первые строки, путь) ==="
 for d in /opt/amnesia/awg /opt/amnezia/awg; do
   f="${d}/panel-nat.sh"
   if [[ -f "$f" ]]; then
     echo "found $f"
-    head -5 "$f"
+    head -8 "$f"
     ls -la "$f"
   fi
 done
 
 echo ""
-echo "=== 8a) iptables (часто nft) FORWARD ==="
-iptables -L FORWARD -n -v --line-numbers 2>&1 | head -30 || true
-
-echo ""
-echo "=== 8b) iptables-legacy FORWARD (Docker обычно здесь; ищите ${IFACE}) ==="
-if command -v iptables-legacy >/dev/null 2>&1; then
-  iptables-legacy -L FORWARD -n -v --line-numbers 2>&1 | head -40
+echo "=== 11) awg/wg show (туннель, handshake, transfer) ==="
+if docker exec "$CONTAINER" true 2>/dev/null; then
+  EXE=wg
+  if docker exec "$CONTAINER" sh -c 'command -v awg' >/dev/null 2>&1; then EXE=awg; fi
+  docker exec "$CONTAINER" "$EXE" show "$IFACE" 2>&1 || echo "wg/awg show failed"
 else
-  echo "iptables-legacy нет"
+  echo "контейнер ${CONTAINER} недоступен"
 fi
 
 echo ""
-echo "=== 9a) iptables NAT POSTROUTING (nft) ==="
-iptables -t nat -L POSTROUTING -n -v --line-numbers 2>&1 | head -20 || true
+echo "=== 12) Интерфейс ${IFACE} ==="
+ip -brief link show "${IFACE}" 2>&1 || echo "нет ${IFACE}"
 
 echo ""
-echo "=== 9b) iptables-legacy NAT POSTROUTING (ищите MASQUERADE для 10.8…) ==="
-if command -v iptables-legacy >/dev/null 2>&1; then
-  iptables-legacy -t nat -L POSTROUTING -n -v --line-numbers 2>&1 | head -25
-else
-  echo "iptables-legacy нет"
-fi
+echo "=== 13) Маршрут до 8.8.8.8 «как с клиентской подсети» (если поддерживается) ==="
+ip route get 8.8.8.8 from 10.8.0.2 iif "${IFACE}" 2>&1 || echo "(lookup не поддержан или нет маршрута)"
 
 echo ""
-echo "=== 10) Маршрут по умолчанию на хосте ==="
-ip route show default 2>&1 || true
+echo "=== 14) Последние логи контейнера (ошибки PostUp/panel-nat) ==="
+docker logs --tail 50 "$CONTAINER" 2>&1 || true
 
 echo ""
-echo "=== Как читать результат (кратко) ==="
-echo "- П.2: ip_forward=0 → форвардинг выключен, клиентский трафик не пойдёт."
-echo "- П.6: latest handshake есть, rx/tx растут при включённом VPN и серфинге → туннель жив; если 0 — нет обмена с клиентом."
-echo "- П.8b/9b (legacy): при включённом VPN bytes на правилах FORWARD/NAT для ${IFACE} должны расти."
-echo "- П.4b: nsenter + iptables-legacy с PID 1 — должно работать при pid:host и CAP_SYS_ADMIN."
-echo "- П.7: нет panel-nat.sh → старый awg0.conf или ручная установка без скрипта панели."
+echo "=== 15) Сравнение: iptables vs iptables-legacy FORWARD (первые 12 строк каждого) ==="
+echo "--- iptables (nft) ---"
+iptables -L FORWARD -n -v --line-numbers 2>&1 | head -12 || true
+echo "--- iptables-legacy ---"
+iptables-legacy -L FORWARD -n -v --line-numbers 2>&1 | head -12 || true
+
+echo ""
+echo "=== Как интерпретировать (кратко) ==="
+echo "A) П.5 FAIL или iptables-legacy -V failed → нет pid:host / SYS_ADMIN или nsenter не может зайти в mount хоста."
+echo "B) П.6–7 через nsenter нет ACCEPT/MASQUERADE для ${IFACE} или 10.8.x → PostUp/panel-nat не отработал (см. П.14 логи awg-quick)."
+echo "C) П.11 handshake есть, transfer почти не растёт при серфинге с VPN → см. A/B или облачный фаервол провайдера."
+echo "D) П.11 transfer растёт, но интернета нет у клиента → смотрите DNS на клиенте или блокировку у оператора клиента."
+echo "E) pid_mode не \"host\" → обновите docker-compose (pid: host) и пересоздайте контейнер."
