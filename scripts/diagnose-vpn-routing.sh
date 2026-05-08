@@ -40,8 +40,11 @@ if docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "pid_mode: $PM"
   fi
   echo "cap_add: $(docker inspect -f '{{.HostConfig.CapAdd}}' "$CONTAINER" 2>/dev/null)"
-  echo "privileged: $(docker inspect -f '{{.HostConfig.Privileged}}' "$CONTAINER" 2>/dev/null)"
-  if docker inspect -f '{{.HostConfig.Privileged}}' "$CONTAINER" 2>/dev/null | grep -qi false; then
+  PR=$(docker inspect -f '{{.HostConfig.Privileged}}' "$CONTAINER" 2>/dev/null | tr -d '\r')
+  echo "privileged: $PR"
+  if echo "$PR" | grep -qi true; then
+    echo "(при privileged=true список cap_add часто пустой — это норма.)"
+  elif echo "$PR" | grep -qi false; then
     echo "ВНИМАНИЕ: privileged=false — при Permission denied на /proc/1/ns/mnt в П.5 нужен privileged: true (AppArmor Docker)."
   fi
 fi
@@ -131,8 +134,9 @@ iptables-legacy -L FORWARD -n -v --line-numbers 2>&1 | head -12 || true
 
 echo ""
 echo "=== Как интерпретировать (кратко) ==="
-echo "A) П.5 FAIL или iptables-legacy -V failed → нет pid:host / SYS_ADMIN или nsenter не может зайти в mount хоста."
-echo "B) П.6–7 через nsenter нет ACCEPT/MASQUERADE для ${IFACE} или 10.8.x → PostUp/panel-nat не отработал (см. П.14 логи awg-quick)."
-echo "C) П.11 handshake есть, transfer почти не растёт при серфинге с VPN → см. A/B или облачный фаервол провайдера."
-echo "D) П.11 transfer растёт, но интернета нет у клиента → смотрите DNS на клиенте или блокировку у оператора клиента."
-echo "E) pid_mode не \"host\" → обновите docker-compose (pid: host) и пересоздайте контейнер."
+echo "A) П.5 FAIL → нет pid:host и/или privileged (nsenter /proc/1/ns/mnt)."
+echo "B) П.6–7 нет ACCEPT/MASQUERADE для ${IFACE} / 10.8.x → PostUp/panel-nat (П.14)."
+echo "C) П.11 transfer не растёт при серфинге → порт/фаервол до VPS или блок у оператора клиента."
+echo "D) П.11 transfer растёт, сайтов нет → DNS на клиенте или блок у оператора."
+echo "E) pid_mode не host → в compose pid: host."
+echo "F) Дубликаты MASQUERADE (П.7) — после стабилизации: остановить контейнер, awg-quick down, цикл iptables-legacy -D … или один чистый пересоздать правила."
