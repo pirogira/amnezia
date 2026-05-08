@@ -201,172 +201,181 @@ export function App() {
             }}
           />
         )}
-        <div style={{ marginTop: "0.75rem", display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-          <label className="muted">Активный сервер: </label>
-          <select
-            value={activeServerId ?? ""}
-            onChange={(e) => setActiveServerId(e.target.value || null)}
-            disabled={servers.length === 0}
-          >
-            {servers.length === 0 ? (
-              <option value="">— добавьте сервер выше —</option>
-            ) : (
-              servers.map((s) => (
+      </div>
+
+      {servers.length > 0 && (
+        <div className="card clients-card">
+          <h2 className="h2">Клиенты</h2>
+          <div className="active-server-block">
+            <label className="active-server-label" htmlFor="active-server-select">
+              Активный сервер
+            </label>
+            <select
+              id="active-server-select"
+              className="active-server-select"
+              value={activeServerId ?? ""}
+              onChange={(e) => setActiveServerId(e.target.value || null)}
+              disabled={servers.length === 0}
+              aria-label="Выбор активного сервера"
+            >
+              {servers.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>
-              ))
-            )}
-          </select>
-          <button
-            type="button"
-            className="btn"
-            disabled={!activeServerId || servers.length === 0}
-            onClick={async () => {
-              const sid = activeServerId;
-              if (!sid) return;
-              const s = servers.find((x) => x.id === sid);
-              if (!window.confirm(`Удалить сервер «${s?.name ?? sid}» и всех его клиентов из панели?`)) return;
-              try {
-                await api<{ ok: boolean }>(`/api/servers/${sid}`, { method: "DELETE" });
-                const list = await api<Server[]>("/api/servers");
-                setServers(list);
-                setActiveServerId((prev) =>
-                  prev === sid ? (list[0]?.id ?? null) : prev && list.some((x) => x.id === prev) ? prev : (list[0]?.id ?? null),
-                );
-                setLastConf(null);
-                setLastVpnUri(null);
-              } catch (e) {
-                window.alert(e instanceof Error ? e.message : String(e));
-              }
-            }}
-          >
-            Удалить сервер
-          </button>
-        </div>
-      </div>
-
-      {activeServer && (
-        <div className="card">
-          <h2 className="h2">Клиенты · {activeServer.name}</h2>
-          <ClientForm
-            key={activeServer.id}
-            server={activeServer}
-            onCreated={async (conf, vpnUri) => {
-              setLastConf(conf);
-              setLastVpnUri(vpnUri ?? null);
-              const list = await api<ClientRow[]>(`/api/servers/${activeServer.id}/clients`);
-              setClients(list);
-            }}
-          />
-          {lastConf && (
-            <div style={{ marginTop: "1rem" }}>
-              <p className="muted">Последний созданный конфиг (.conf)</p>
-              <div className="qr">
-                <QRCodeSVG value={lastConf} size={180} />
-              </div>
-              <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>{lastConf}</pre>
-              {lastVpnUri && (
+              ))}
+            </select>
+            <button
+              type="button"
+              className="btn btn-server-delete"
+              disabled={!activeServerId}
+              onClick={async () => {
+                const sid = activeServerId;
+                if (!sid) return;
+                const s = servers.find((x) => x.id === sid);
+                if (!window.confirm(`Удалить сервер «${s?.name ?? sid}» и всех его клиентов из панели?`)) return;
+                try {
+                  await api<{ ok: boolean }>(`/api/servers/${sid}`, { method: "DELETE" });
+                  const list = await api<Server[]>("/api/servers");
+                  setServers(list);
+                  setActiveServerId((prev) =>
+                    prev === sid ? (list[0]?.id ?? null) : prev && list.some((x) => x.id === prev) ? prev : (list[0]?.id ?? null),
+                  );
+                  setLastConf(null);
+                  setLastVpnUri(null);
+                } catch (e) {
+                  window.alert(e instanceof Error ? e.message : String(e));
+                }
+              }}
+            >
+              Удалить сервер
+            </button>
+          </div>
+          {activeServer ? (
+            <>
+              <ClientForm
+                key={activeServer.id}
+                server={activeServer}
+                onCreated={async (conf, vpnUri) => {
+                  setLastConf(conf);
+                  setLastVpnUri(vpnUri ?? null);
+                  const list = await api<ClientRow[]>(`/api/servers/${activeServer.id}/clients`);
+                  setClients(list);
+                }}
+              />
+              {lastConf && (
                 <div style={{ marginTop: "1rem" }}>
-                  <p className="muted">Импорт в приложение Amnezia (ссылка vpn://)</p>
+                  <p className="muted">Последний созданный конфиг (.conf)</p>
                   <div className="qr">
-                    <QRCodeSVG value={lastVpnUri} size={180} />
+                    <QRCodeSVG value={lastConf} size={180} />
                   </div>
-                  <textarea
-                    readOnly
-                    rows={4}
-                    value={lastVpnUri}
-                    style={{ width: "100%", fontFamily: "monospace", fontSize: "0.7rem" }}
-                  />
-                  <button
-                    className="btn"
-                    type="button"
-                    style={{ marginTop: "0.35rem" }}
-                    onClick={() => void navigator.clipboard.writeText(lastVpnUri)}
-                  >
-                    Копировать vpn://
-                  </button>
+                  <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>{lastConf}</pre>
+                  {lastVpnUri && (
+                    <div style={{ marginTop: "1rem" }}>
+                      <p className="muted">Импорт в приложение Amnezia (ссылка vpn://)</p>
+                      <div className="qr">
+                        <QRCodeSVG value={lastVpnUri} size={180} />
+                      </div>
+                      <textarea
+                        readOnly
+                        rows={4}
+                        value={lastVpnUri}
+                        style={{ width: "100%", fontFamily: "monospace", fontSize: "0.7rem" }}
+                      />
+                      <button
+                        className="btn"
+                        type="button"
+                        style={{ marginTop: "0.35rem" }}
+                        onClick={() => void navigator.clipboard.writeText(lastVpnUri)}
+                      >
+                        Копировать vpn://
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
-          <table className="table" style={{ marginTop: "1rem" }}>
-            <thead>
-              <tr>
-                <th>Имя</th>
-                <th>Протокол</th>
-                <th>IP</th>
-                <th>Порт</th>
-                <th>Статус</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {clients.map((c) => (
-                <tr key={c.id}>
-                  <td>{c.name}</td>
-                  <td>{c.protocol}</td>
-                  <td>{c.assigned_ip}</td>
-                  <td>{c.listen_port}</td>
-                  <td>{c.revoked_at ? "отозван" : "активен"}</td>
-                  <td>
-                    <button
-                      className="btn"
-                      type="button"
-                      onClick={async () => {
-                        const text = await api<string>(`/api/clients/${c.id}/wg.conf`);
-                        const blob = new Blob([text], { type: "text/plain" });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement("a");
-                        a.href = url;
-                        a.download = c.protocol === "vless" ? `${c.name}.txt` : `${c.name}.conf`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}
-                    >
-                      {c.protocol === "vless" ? "ссылка" : ".conf"}
-                    </button>
-                    {c.protocol === "amneziawg" && (
-                      <>
-                        {" "}
+              <table className="table" style={{ marginTop: "1rem" }}>
+                <thead>
+                  <tr>
+                    <th>Имя</th>
+                    <th>Протокол</th>
+                    <th>IP</th>
+                    <th>Порт</th>
+                    <th>Статус</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {clients.map((c) => (
+                    <tr key={c.id}>
+                      <td>{c.name}</td>
+                      <td>{c.protocol}</td>
+                      <td>{c.assigned_ip}</td>
+                      <td>{c.listen_port}</td>
+                      <td>{c.revoked_at ? "отозван" : "активен"}</td>
+                      <td>
                         <button
                           className="btn"
                           type="button"
                           onClick={async () => {
-                            const { vpnUri } = await api<{ vpnUri: string }>(`/api/clients/${c.id}/vpn`);
-                            const blob = new Blob([vpnUri], { type: "text/plain" });
+                            const text = await api<string>(`/api/clients/${c.id}/wg.conf`);
+                            const blob = new Blob([text], { type: "text/plain" });
                             const url = URL.createObjectURL(blob);
                             const a = document.createElement("a");
                             a.href = url;
-                            a.download = `${c.name}-amnezia.txt`;
+                            a.download = c.protocol === "vless" ? `${c.name}.txt` : `${c.name}.conf`;
                             a.click();
                             URL.revokeObjectURL(url);
                           }}
                         >
-                          vpn://
+                          {c.protocol === "vless" ? "ссылка" : ".conf"}
                         </button>
-                      </>
-                    )}{" "}
-                    {!c.revoked_at && (
-                      <button
-                        className="btn danger"
-                        type="button"
-                        onClick={async () => {
-                          await api(`/api/clients/${c.id}`, { method: "DELETE" });
-                          const list = await api<ClientRow[]>(
-                            `/api/servers/${activeServer.id}/clients`,
-                          );
-                          setClients(list);
-                        }}
-                      >
-                        Отозвать
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                        {c.protocol === "amneziawg" && (
+                          <>
+                            {" "}
+                            <button
+                              className="btn"
+                              type="button"
+                              onClick={async () => {
+                                const { vpnUri } = await api<{ vpnUri: string }>(`/api/clients/${c.id}/vpn`);
+                                const blob = new Blob([vpnUri], { type: "text/plain" });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `${c.name}-amnezia.txt`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }}
+                            >
+                              vpn://
+                            </button>
+                          </>
+                        )}{" "}
+                        {!c.revoked_at && (
+                          <button
+                            className="btn danger"
+                            type="button"
+                            onClick={async () => {
+                              await api(`/api/clients/${c.id}`, { method: "DELETE" });
+                              const list = await api<ClientRow[]>(
+                                `/api/servers/${activeServer.id}/clients`,
+                              );
+                              setClients(list);
+                            }}
+                          >
+                            Отозвать
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : (
+            <p className="muted" style={{ margin: "0.5rem 0 0" }}>
+              Выберите сервер в списке выше.
+            </p>
+          )}
         </div>
       )}
 

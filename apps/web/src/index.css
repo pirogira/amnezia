@@ -109,6 +109,88 @@ button {
   box-shadow: 0 4px 24px rgba(0, 20, 35, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+.clients-card .h2 {
+  margin-bottom: 0.5rem;
+}
+
+.active-server-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  width: 100%;
+  margin-bottom: 1.35rem;
+}
+
+.active-server-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+}
+
+select.active-server-select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-height: 3.35rem;
+  padding: 0.75rem 2.75rem 0.75rem 1.1rem;
+  font-size: 1.08rem;
+  font-weight: 600;
+  line-height: 1.25;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: rgba(8, 45, 58, 0.92);
+  background-image: linear-gradient(180deg, rgba(30, 110, 120, 0.5) 0%, rgba(6, 38, 52, 0.98) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%237dd3fc' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, no-repeat;
+  background-position: 0 0, right 1rem center;
+  background-size: auto, 1.25rem;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+select.active-server-select:hover:not(:disabled) {
+  border-color: #5eead4;
+  box-shadow: 0 4px 22px rgba(13, 148, 136, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+select.active-server-select:focus {
+  outline: none;
+  border-color: #5eead4;
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 4px 22px rgba(13, 148, 136, 0.25);
+}
+
+select.active-server-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn.btn-server-delete {
+  width: 100%;
+  min-height: 2.75rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: 10px;
+  border-color: rgba(251, 113, 133, 0.4);
+  background: rgba(45, 22, 32, 0.72);
+  color: #fecdd3;
+}
+
+.btn.btn-server-delete:hover:not(:disabled) {
+  background: rgba(72, 30, 42, 0.88);
+  border-color: rgba(251, 113, 133, 0.6);
+}
+
+.btn.btn-server-delete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .row {
   display: flex;
   flex-wrap: wrap;
