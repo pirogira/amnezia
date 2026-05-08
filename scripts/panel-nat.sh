@@ -2,13 +2,12 @@
 # Держите в соответствии с apps/api/src/provision/panelNatScript.ts (buildPanelWgNatScript).
 
 # amnesia-veb: NAT и FORWARD для клиентов VPN.
-# Требуется compose: network_mode host, pid host, privileged (доступ /proc/1/ns/mnt для nsenter).
+# compose: network_mode host, pid host, privileged.
 set -eu
 ACTION=${1:?}
 IFACE=${2:?}
 SUBNET=${3:?}
 
-# Хостовый iptables-legacy (filter FORWARD, DOCKER-USER).
 run_ipt() {
   if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables-legacy 2>/dev/null; then
     nsenter -t 1 -m -- /usr/sbin/iptables-legacy "$@"
@@ -25,13 +24,33 @@ run_ipt() {
   iptables "$@"
 }
 
-# Хостовый iptables (nf_tables) — таблица nat / POSTROUTING.
-run_ipt_nft() {
-  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then
-    nsenter -t 1 -m -- /usr/sbin/iptables "$@"
-    return
+nft_nat_chain() {
+  for c in postrouting POSTROUTING; do
+    if nft list chain ip nat "$c" >/dev/null 2>&1; then
+      printf %s "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+nft_masq_up() {
+  command -v nft >/dev/null 2>&1 || return 1
+  CH=$(nft_nat_chain) || return 1
+  if nft -a list chain ip nat "$CH" 2>/dev/null | grep -F "ip saddr $SUBNET" | grep -q masquerade; then
+    return 0
   fi
-  iptables "$@"
+  nft add rule ip nat "$CH" ip saddr "$SUBNET" ip daddr != "$SUBNET" masquerade
+}
+
+nft_masq_down() {
+  command -v nft >/dev/null 2>&1 || return 0
+  CH=$(nft_nat_chain) || return 0
+  while true; do
+    h=$(nft -a list chain ip nat "$CH" 2>/dev/null | grep -F "ip saddr $SUBNET" | grep masquerade | sed -n 's/.*# handle \([0-9][0-9]*\).*/\1/p' | head -n1)
+    case "$h" in ''|*[!0-9]*) break ;; esac
+    nft delete rule ip nat "$CH" handle "$h" 2>/dev/null || break
+  done
 }
 
 case "$ACTION" in
@@ -41,11 +60,19 @@ up)
   run_ipt -C FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null || run_ipt -I FORWARD 1 -o "$IFACE" -j ACCEPT
   run_ipt -C DOCKER-USER -i "$IFACE" -j RETURN 2>/dev/null || run_ipt -I DOCKER-USER 1 -i "$IFACE" -j RETURN 2>/dev/null || true
   run_ipt -C DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null || run_ipt -I DOCKER-USER 1 -o "$IFACE" -j RETURN 2>/dev/null || true
-  run_ipt_nft -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || run_ipt_nft -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE
+  if ! nft_masq_up; then
+    echo "panel-nat: nft masquerade failed, fallback iptables (nf_tables)" >&2
+    if nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then
+      nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE
+    fi
+  fi
   ;;
 down)
-  while run_ipt_nft -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done
+  nft_masq_down
   while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done
+  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then
+    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done
+  fi
   while run_ipt -D DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null; do :; done
   while run_ipt -D DOCKER-USER -i "$IFACE" -j RETURN 2>/dev/null; do :; done
   while run_ipt -D FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null; do :; done
