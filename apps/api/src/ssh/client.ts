@@ -21,13 +21,16 @@ export const SAFE_IFACE = /^(?:wg|awg)[0-9]+$/;
 export const SAFE_HOOK_PATH = /^\/[a-zA-Z0-9/_-]+\.sh$/;
 export const SAFE_COMPOSE_PATH = /^\/[a-zA-Z0-9/_.-]+\.(ya?ml)$/;
 
-/** Кандидаты для AmneziaWG: `awg` не всегда в PATH у `sh`, тогда остаётся только полный путь. */
-const AWG_PROBE_EXES = ["awg", "/usr/bin/awg", "/usr/local/bin/awg"] as const;
+/**
+ * Для awg* в образах вроде amneziavpn/amnezia-wg чаще в PATH есть `wg` (симлинк на awg), а команда `awg` отсутствует.
+ * Пробуем `wg` и абсолютные пути раньше, чтобы не получать «executable file not found» при ручном docker exec.
+ */
+const AWG_IFACE_EXE_PROBE = ["wg", "/usr/bin/wg", "awg", "/usr/bin/awg", "/usr/local/bin/awg"] as const;
+
+const ALLOWED_WG_EXE = new Set<string>([...AWG_IFACE_EXE_PROBE]);
 
 function assertWgExe(exe: string): void {
-  if (exe === "wg") return;
-  if ((AWG_PROBE_EXES as readonly string[]).includes(exe)) return;
-  throw new Error("invalid wg executable");
+  if (!ALLOWED_WG_EXE.has(exe)) throw new Error("invalid wg executable");
 }
 
 /**
@@ -42,10 +45,10 @@ export async function dockerResolveWgExe(
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
   if (!/^awg\d+$/.test(iface)) return "wg";
-  for (const awgExe of AWG_PROBE_EXES) {
-    const cmd = `docker exec ${shellQuote(container)} ${shellQuote(awgExe)} show ${shellQuote(iface)}`;
+  for (const exe of AWG_IFACE_EXE_PROBE) {
+    const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} show ${shellQuote(iface)}`;
     const r = await execRemoteAfterContainerRunning(auth, container, cmd);
-    if (r.code === 0) return awgExe;
+    if (r.code === 0) return exe;
   }
   return "wg";
 }
