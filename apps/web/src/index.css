@@ -1,13 +1,19 @@
 :root {
   color-scheme: dark;
-  --bg: #0f1115;
-  --panel: #161a22;
-  --border: #2a3140;
-  --text: #e8ecf1;
-  --muted: #9aa3b2;
-  --accent: #5b8cff;
-  --danger: #f87171;
-  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  /* Ocean / dolphin palette */
+  --bg-deep: #06121f;
+  --panel: rgba(10, 42, 58, 0.78);
+  --panel-solid: #0c2a38;
+  --border: rgba(94, 189, 200, 0.28);
+  --border-strong: rgba(45, 212, 191, 0.45);
+  --text: #e8f4f7;
+  --muted: #8fb8c4;
+  --accent: #2dd4bf;
+  --accent-deep: #0d9488;
+  --accent-glow: rgba(45, 212, 191, 0.35);
+  --danger: #fb7185;
+  --sun-glint: #fcd9a4;
+  font-family: system-ui, "Segoe UI", "Nunito Sans", Roboto, sans-serif;
   line-height: 1.45;
 }
 
@@ -15,15 +21,24 @@
   box-sizing: border-box;
 }
 
+html {
+  min-height: 100%;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--bg);
+  background: var(--bg-deep);
   color: var(--text);
 }
 
 a {
   color: var(--accent);
+  text-decoration-color: rgba(45, 212, 191, 0.5);
+}
+
+a:hover {
+  color: #5eead4;
 }
 
 input,
@@ -37,18 +52,61 @@ button {
   cursor: pointer;
 }
 
+/* Full-viewport background: dolphins image + readable overlay. Cards stay opaque/glass. */
+.app-shell {
+  min-height: 100vh;
+  background-color: var(--bg-deep);
+  background-image: linear-gradient(
+      165deg,
+      rgba(4, 18, 32, 0.82) 0%,
+      rgba(6, 35, 52, 0.55) 35%,
+      rgba(4, 28, 42, 0.72) 65%,
+      rgba(2, 12, 22, 0.9) 100%
+    ),
+    url("/ocean-dolphins-bg.png");
+  background-size: cover;
+  background-position: center 22%;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    background-position: center 15%;
+    background-attachment: scroll;
+  }
+}
+
 .layout {
-  max-width: 960px;
+  max-width: 980px;
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 1.75rem 1.5rem 2.5rem;
+  position: relative;
+}
+
+.layout::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 120% 80% at 50% -10%, rgba(45, 212, 191, 0.08), transparent 55%);
+  z-index: 0;
+}
+
+.layout > * {
+  position: relative;
+  z-index: 1;
 }
 
 .card {
   background: var(--panel);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 1rem 1.25rem;
-  margin-bottom: 1rem;
+  border-radius: 14px;
+  padding: 1.15rem 1.35rem;
+  margin-bottom: 1.1rem;
+  box-shadow: 0 4px 24px rgba(0, 20, 35, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .row {
@@ -73,11 +131,20 @@ button {
 .field input,
 .field select,
 .field textarea {
-  padding: 0.45rem 0.55rem;
-  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
   border: 1px solid var(--border);
-  background: #0b0d12;
+  background: rgba(4, 20, 30, 0.65);
   color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .field textarea {
@@ -86,24 +153,40 @@ button {
 }
 
 .btn {
-  padding: 0.5rem 0.9rem;
-  border-radius: 6px;
+  padding: 0.5rem 0.95rem;
+  border-radius: 8px;
   border: 1px solid var(--border);
-  background: #1f2633;
+  background: rgba(15, 55, 68, 0.75);
   color: var(--text);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.btn:hover {
+  background: rgba(20, 70, 85, 0.9);
+  border-color: rgba(94, 189, 200, 0.4);
+}
+
+.btn:active {
+  transform: scale(0.98);
 }
 
 .btn.primary {
-  background: var(--accent);
-  border-color: #3f6fd6;
-  color: #0a0c10;
+  background: linear-gradient(135deg, #2dd4bf 0%, #0d9488 55%, #0f766e 100%);
+  border-color: rgba(45, 212, 191, 0.55);
+  color: #021014;
   font-weight: 600;
+  box-shadow: 0 2px 14px rgba(13, 148, 136, 0.35);
+}
+
+.btn.primary:hover {
+  background: linear-gradient(135deg, #5eead4 0%, #14b8a6 50%, #0d9488 100%);
+  border-color: #5eead4;
 }
 
 .btn.danger {
-  border-color: #7f1d1d;
-  background: #3f1515;
-  color: #fecaca;
+  border-color: rgba(251, 113, 133, 0.45);
+  background: rgba(60, 20, 28, 0.85);
+  color: #fecdd3;
 }
 
 .muted {
@@ -112,13 +195,33 @@ button {
 }
 
 .h1 {
-  font-size: 1.35rem;
+  font-size: 1.45rem;
   margin: 0 0 0.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(120deg, #e8f4f7 0%, #a5f3fc 45%, var(--sun-glint) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 40px rgba(94, 234, 212, 0.15);
+}
+
+/* Fallback if clip unsupported */
+@supports not (background-clip: text) {
+  .h1 {
+    color: var(--text);
+    background: none;
+  }
 }
 
 .h2 {
-  font-size: 1.1rem;
+  font-size: 1.12rem;
   margin: 0 0 0.75rem;
+  font-weight: 600;
+  color: #b8ecf0;
+  letter-spacing: 0.01em;
+  border-bottom: 1px solid rgba(45, 212, 191, 0.15);
+  padding-bottom: 0.45rem;
 }
 
 .table {
@@ -129,10 +232,18 @@ button {
 
 .table th,
 .table td {
-  border-bottom: 1px solid var(--border);
-  padding: 0.45rem 0.35rem;
+  border-bottom: 1px solid rgba(94, 189, 200, 0.12);
+  padding: 0.5rem 0.4rem;
   text-align: left;
   vertical-align: top;
+}
+
+.table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .error {
@@ -142,7 +253,16 @@ button {
 
 .qr {
   background: #fff;
-  padding: 0.5rem;
-  border-radius: 8px;
+  padding: 0.55rem;
+  border-radius: 10px;
   display: inline-block;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+code {
+  font-size: 0.88em;
+  background: rgba(4, 24, 35, 0.6);
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  border: 1px solid rgba(94, 189, 200, 0.2);
 }
