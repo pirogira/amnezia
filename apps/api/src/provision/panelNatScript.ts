@@ -4,19 +4,21 @@ export const PANEL_WG_NAT_SCRIPT_BASENAME = "panel-nat.sh";
 /**
  * PostUp/PostDown для awg0.conf: вызывается из контейнера с network_mode host,
  * правки iptables и sysctl относятся к хосту.
+ * Дубликат для curl на VPS: `scripts/panel-nat.sh` — держите в соответствии.
  */
 export function buildPanelWgNatScript(): string {
   return [
     "#!/bin/sh",
-    "# amnesia-veb: NAT и FORWARD для клиентов VPN (iptables / iptables-legacy).",
+    "# amnesia-veb: NAT и FORWARD для клиентов VPN.",
+    "# Сначала iptables-legacy: Docker на Ubuntu часто пишет в legacy; иначе правила уходят в nft и не работают.",
     "set -eu",
     "ACTION=${1:?}",
     "IFACE=${2:?}",
     "SUBNET=${3:?}",
     "",
     "iptables_bin() {",
-    "  if command -v iptables >/dev/null 2>&1; then printf %s iptables; return; fi",
     "  if command -v iptables-legacy >/dev/null 2>&1; then printf %s iptables-legacy; return; fi",
+    "  if command -v iptables >/dev/null 2>&1; then printf %s iptables; return; fi",
     '  printf %s ""',
     "}",
     "",

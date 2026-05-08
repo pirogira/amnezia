@@ -57,12 +57,28 @@ for d in /opt/amnesia/awg /opt/amnezia/awg; do
 done
 
 echo ""
-echo "=== 8) iptables FORWARD (ищите счётчики bytes на правилах с ${IFACE}) ==="
-( iptables -L FORWARD -n -v --line-numbers 2>&1 || iptables-legacy -L FORWARD -n -v --line-numbers 2>&1 ) | head -45
+echo "=== 8a) iptables (часто nft) FORWARD ==="
+iptables -L FORWARD -n -v --line-numbers 2>&1 | head -30 || true
 
 echo ""
-echo "=== 9) iptables NAT POSTROUTING (MASQUERADE для подсети VPN) ==="
-( iptables -t nat -L POSTROUTING -n -v --line-numbers 2>&1 || iptables-legacy -t nat -L POSTROUTING -n -v --line-numbers 2>&1 ) | head -30
+echo "=== 8b) iptables-legacy FORWARD (Docker обычно здесь; ищите ${IFACE}) ==="
+if command -v iptables-legacy >/dev/null 2>&1; then
+  iptables-legacy -L FORWARD -n -v --line-numbers 2>&1 | head -40
+else
+  echo "iptables-legacy нет"
+fi
+
+echo ""
+echo "=== 9a) iptables NAT POSTROUTING (nft) ==="
+iptables -t nat -L POSTROUTING -n -v --line-numbers 2>&1 | head -20 || true
+
+echo ""
+echo "=== 9b) iptables-legacy NAT POSTROUTING (ищите MASQUERADE для 10.8…) ==="
+if command -v iptables-legacy >/dev/null 2>&1; then
+  iptables-legacy -t nat -L POSTROUTING -n -v --line-numbers 2>&1 | head -25
+else
+  echo "iptables-legacy нет"
+fi
 
 echo ""
 echo "=== 10) Маршрут по умолчанию на хосте ==="
@@ -72,5 +88,6 @@ echo ""
 echo "=== Как читать результат (кратко) ==="
 echo "- П.2: ip_forward=0 → форвардинг выключен, клиентский трафик не пойдёт."
 echo "- П.6: latest handshake есть, rx/tx растут при включённом VPN и серфинге → туннель жив; если 0 — нет обмена с клиентом."
-echo "- П.8–9: при включённом VPN на телефоне bytes на правилах FORWARD/NAT для ${IFACE} должны расти; если 0 — пакеты не форвардятся/NAT не срабатывает."
+echo "- П.8b/9b (legacy): при включённом VPN bytes на правилах FORWARD/NAT для ${IFACE} должны расти."
+echo "- Если в 8a есть awg0, а в 8b нет — PostUp писал в «не тот» iptables (см. panel-nat: legacy первым)."
 echo "- П.7: нет panel-nat.sh → старый awg0.conf или ручная установка без скрипта панели."
