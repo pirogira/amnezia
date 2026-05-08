@@ -308,6 +308,6 @@ export async function runPortHook(
   return { ok: r.code === 0, ...r };
 }
 
-function shellQuote(s: string): string {
+export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }

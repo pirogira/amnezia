@@ -47,6 +47,7 @@ export function App() {
   const [token, setTok] = useState<string | null>(() => getToken());
   const [me, setMe] = useState<Me | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [serverAddMode, setServerAddMode] = useState<"manual" | "provision">("manual");
   const [servers, setServers] = useState<Server[]>([]);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [clients, setClients] = useState<ClientRow[]>([]);
@@ -163,15 +164,43 @@ export function App() {
 
       <div className="card">
         <h2 className="h2">Серверы</h2>
-        <ServerForm
-          onCreated={async () => {
-            const list = await api<Server[]>("/api/servers");
-            setServers(list);
-            setActiveServerId((prev) =>
-              prev && list.some((s) => s.id === prev) ? prev : (list[0]?.id ?? null),
-            );
-          }}
-        />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.75rem" }}>
+          <button
+            type="button"
+            className={serverAddMode === "manual" ? "btn primary" : "btn"}
+            onClick={() => setServerAddMode("manual")}
+          >
+            Добавить вручную
+          </button>
+          <button
+            type="button"
+            className={serverAddMode === "provision" ? "btn primary" : "btn"}
+            onClick={() => setServerAddMode("provision")}
+          >
+            Развернуть Amnezia на VPS
+          </button>
+        </div>
+        {serverAddMode === "manual" ? (
+          <ServerForm
+            onCreated={async () => {
+              const list = await api<Server[]>("/api/servers");
+              setServers(list);
+              setActiveServerId((prev) =>
+                prev && list.some((s) => s.id === prev) ? prev : (list[0]?.id ?? null),
+              );
+            }}
+          />
+        ) : (
+          <ProvisionServerForm
+            onCreated={async () => {
+              const list = await api<Server[]>("/api/servers");
+              setServers(list);
+              setActiveServerId((prev) =>
+                prev && list.some((s) => s.id === prev) ? prev : (list[0]?.id ?? null),
+              );
+            }}
+          />
+        )}
         <div style={{ marginTop: "0.75rem" }}>
           <label className="muted">Активный сервер: </label>
           <select
@@ -451,6 +480,183 @@ function LoginForm(props: {
         </button>
       </div>
       {props.error && <p className="error">{props.error}</p>}
+    </form>
+  );
+}
+
+type ProvisionStep = { step: string; ok: boolean; message?: string };
+
+function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
+  const [name, setName] = useState("New VPS");
+  const [sshHost, setSshHost] = useState("");
+  const [sshPort, setSshPort] = useState(22);
+  const [sshKey, setSshKey] = useState("");
+  const [sshPassword, setSshPassword] = useState("");
+  const [endpoint, setEndpoint] = useState("");
+  const [listenPort, setListenPort] = useState(51820);
+  const [cidr, setCidr] = useState("10.8.0.0/24");
+  const [vlessJson, setVlessJson] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [steps, setSteps] = useState<ProvisionStep[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <form
+      className="row"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setMsg(null);
+        setSteps([]);
+        let vlessReality: VlessReality | undefined;
+        if (vlessJson.trim()) {
+          try {
+            vlessReality = JSON.parse(vlessJson) as VlessReality;
+          } catch {
+            setMsg("Невалидный JSON в поле VLESS Reality");
+            return;
+          }
+        }
+        const tok = getToken();
+        setBusy(true);
+        try {
+          const res = await fetch("/api/servers/provision", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
+            },
+            body: JSON.stringify({
+              name,
+              sshHost,
+              sshPort,
+              sshUser: "root",
+              sshPrivateKey: sshKey,
+              sshPassword,
+              endpointHost: endpoint.trim() || undefined,
+              listenPort,
+              vpnSubnetCidr: cidr,
+              vlessReality,
+            }),
+          });
+          const j = (await res.json().catch(() => ({}))) as {
+            id?: string;
+            steps?: ProvisionStep[];
+            message?: string;
+            error?: string;
+            details?: unknown;
+          };
+          if (!res.ok) {
+            const detail =
+              j.details && typeof j.details === "object"
+                ? JSON.stringify(j.details)
+                : "";
+            setMsg([j.message || j.error || `HTTP ${res.status}`, detail].filter(Boolean).join(" — "));
+            if (Array.isArray(j.steps)) setSteps(j.steps);
+            return;
+          }
+          if (Array.isArray(j.steps)) setSteps(j.steps);
+          setMsg(j.id ? `Сервер добавлен (id: ${j.id})` : "Сервер добавлен");
+          await props.onCreated();
+        } catch (err) {
+          setMsg(err instanceof Error ? err.message : String(err));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <p className="muted" style={{ width: "100%", margin: "0 0 0.5rem", fontSize: "0.88rem" }}>
+        Чистый <strong>Ubuntu 22.04 / 24.04</strong>, SSH под <strong>root</strong> (ключ или пароль). Панель установит
+        Docker, поднимет контейнер <code>amnezia-awg</code> и зарегистрирует сервер. Если контейнер уже есть — только
+        запись в панели.
+      </p>
+      <div className="field">
+        <label>Имя</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>SSH host</label>
+        <input value={sshHost} onChange={(e) => setSshHost(e.target.value)} required />
+      </div>
+      <div className="field">
+        <label>SSH port</label>
+        <input
+          type="number"
+          value={sshPort}
+          onChange={(e) => setSshPort(Number(e.target.value))}
+        />
+      </div>
+      <div className="field">
+        <label>SSH user</label>
+        <input value="root" readOnly disabled />
+      </div>
+      <div className="field" style={{ flex: "1 1 240px" }}>
+        <label>SSH private key</label>
+        <textarea
+          value={sshKey}
+          onChange={(e) => setSshKey(e.target.value)}
+          placeholder="OpenSSH PEM или пусто, если пароль"
+          rows={5}
+        />
+      </div>
+      <div className="field">
+        <label>SSH пароль root</label>
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={sshPassword}
+          onChange={(e) => setSshPassword(e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label>Endpoint (публичный IP/DNS)</label>
+        <input
+          value={endpoint}
+          onChange={(e) => setEndpoint(e.target.value)}
+          placeholder="пусто = как SSH host"
+        />
+      </div>
+      <div className="field">
+        <label>Listen port UDP</label>
+        <input
+          type="number"
+          value={listenPort}
+          onChange={(e) => setListenPort(Number(e.target.value))}
+        />
+      </div>
+      <div className="field">
+        <label>VPN subnet /24</label>
+        <input value={cidr} onChange={(e) => setCidr(e.target.value)} />
+      </div>
+      <div className="field" style={{ flex: "1 1 100%" }}>
+        <label>VLESS Reality (JSON, опционально)</label>
+        <textarea
+          value={vlessJson}
+          onChange={(e) => setVlessJson(e.target.value)}
+          rows={3}
+          style={{ fontFamily: "monospace", fontSize: "0.85rem" }}
+        />
+      </div>
+      <button className="btn primary" type="submit" disabled={busy}>
+        {busy ? "Развёртывание…" : "Развернуть"}
+      </button>
+      {msg && (
+        <p
+          className={msg.startsWith("Сервер добавлен") ? "muted" : "error"}
+          style={{ width: "100%", marginTop: "0.5rem" }}
+        >
+          {msg}
+        </p>
+      )}
+      {steps.length > 0 && (
+        <ul className="muted" style={{ width: "100%", margin: "0.5rem 0 0", fontSize: "0.85rem", paddingLeft: "1.2rem" }}>
+          {steps.map((s, i) => (
+            <li key={`${s.step}-${i}`}>
+              <strong>{s.step}</strong>: {s.ok ? "ok" : "ошибка"}
+              {s.message ? ` — ${s.message}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
     </form>
   );
 }

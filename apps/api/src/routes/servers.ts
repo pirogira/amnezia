@@ -1,12 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
 import { getDb } from "../db.js";
-import { encryptSecret } from "../crypto.js";
-import { getEncryptionMaster } from "../cryptoEnv.js";
-import { writeAudit } from "../audit.js";
 import type { ServerRow } from "../drivers/types.js";
 import { changeServerListenPort } from "../services/portChange.js";
+import { insertVpnServerRecord } from "../services/vpnServerInsert.js";
+import { runProvisionAmneziaAwg } from "../provision/runner.js";
 import { parseVlessRealityJson } from "../vlessUri.js";
 
 const vlessRealityShape = z
@@ -58,6 +56,36 @@ const portBody = z.object({
   port: z.coerce.number().int().min(1024).max(65535),
 });
 
+const serverProvision = z
+  .object({
+    name: z.string().min(1).max(128),
+    sshHost: z.string().min(1).max(255),
+    sshPort: z.coerce.number().int().min(1).max(65535).default(22),
+    sshUser: z.string().min(1).max(64).default("root"),
+    sshPrivateKey: z.string().max(65535).default(""),
+    sshPassword: z.string().max(2048).default(""),
+    endpointHost: z.string().min(1).max(255).optional(),
+    listenPort: z.coerce.number().int().min(1).max(65535).default(51820),
+    vpnSubnetCidr: z.string().regex(/^\d+\.\d+\.\d+\.\d+\/24$/).default("10.8.0.0/24"),
+    vlessReality: vlessRealityShape,
+  })
+  .superRefine((b, ctx) => {
+    if (b.sshUser !== "root") {
+      ctx.addIssue({
+        code: "custom",
+        message: "Провижининг поддерживается только для SSH-пользователя root.",
+        path: ["sshUser"],
+      });
+    }
+    if (!b.sshPrivateKey.trim() && !b.sshPassword.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Для SSH укажите приватный ключ (OpenSSH/RSA PEM) или пароль.",
+        path: ["sshPrivateKey"],
+      });
+    }
+  });
+
 async function requireUser(req: FastifyRequest, reply: FastifyReply) {
   try {
     await req.jwtVerify();
@@ -69,6 +97,35 @@ async function requireUser(req: FastifyRequest, reply: FastifyReply) {
 }
 
 export async function serverRoutes(app: FastifyInstance): Promise<void> {
+  app.post("/servers/provision", async (req, reply) => {
+    const sub = await requireUser(req, reply);
+    if (!sub) return;
+    const parsed = serverProvision.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+    const b = parsed.data;
+    const endpointHost = (b.endpointHost?.trim() || b.sshHost).trim();
+    const result = await runProvisionAmneziaAwg(sub, {
+      name: b.name,
+      sshHost: b.sshHost,
+      sshPort: b.sshPort,
+      sshUser: b.sshUser,
+      sshPrivateKey: b.sshPrivateKey,
+      sshPassword: b.sshPassword,
+      endpointHost,
+      listenPort: b.listenPort,
+      vpnSubnetCidr: b.vpnSubnetCidr,
+      vlessReality: b.vlessReality,
+    });
+    if (!result.ok) {
+      return reply.code(502).send({
+        error: "provision_failed",
+        message: result.message,
+        steps: result.steps,
+      });
+    }
+    return { id: result.serverId, steps: result.steps };
+  });
+
   app.get("/servers", async (req, reply) => {
     const sub = await requireUser(req, reply);
     if (!sub) return;
@@ -82,43 +139,24 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
     const parsed = serverCreate.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
     const b = parsed.data;
-    const id = randomUUID();
-    const now = new Date().toISOString();
-    const master = getEncryptionMaster();
-    const keyEnc = encryptSecret(b.sshPrivateKey.trim(), master);
-    const pwdEnc = b.sshPassword.trim()
-      ? encryptSecret(b.sshPassword.trim(), master)
-      : null;
-    const vlessJson = b.vlessReality ? JSON.stringify(b.vlessReality) : null;
-    getDb()
-      .prepare(
-        `INSERT INTO vpn_servers (
-        id, name, ssh_host, ssh_port, ssh_user, ssh_private_key_enc, ssh_password_enc,
-        docker_wg_container, wg_interface, vpn_subnet_cidr, endpoint_host, listen_port,
-        docker_compose_path, compose_service_name, port_change_hook_cmd, driver_mode, vless_reality_json, created_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        id,
-        b.name,
-        b.sshHost,
-        b.sshPort,
-        b.sshUser,
-        keyEnc,
-        pwdEnc,
-        b.dockerWgContainer,
-        b.wgInterface,
-        b.vpnSubnetCidr,
-        b.endpointHost,
-        b.listenPort,
-        b.dockerComposePath ?? null,
-        b.composeServiceName ?? null,
-        b.portChangeHookCmd ?? null,
-        b.driverMode,
-        vlessJson,
-        now,
-      );
-    writeAudit(sub, "server_create", { serverId: id, name: b.name });
+    const id = insertVpnServerRecord(sub, {
+      name: b.name,
+      sshHost: b.sshHost,
+      sshPort: b.sshPort,
+      sshUser: b.sshUser,
+      sshPrivateKey: b.sshPrivateKey,
+      sshPassword: b.sshPassword,
+      dockerWgContainer: b.dockerWgContainer,
+      wgInterface: b.wgInterface,
+      vpnSubnetCidr: b.vpnSubnetCidr,
+      endpointHost: b.endpointHost,
+      listenPort: b.listenPort,
+      dockerComposePath: b.dockerComposePath ?? null,
+      composeServiceName: b.composeServiceName ?? null,
+      portChangeHookCmd: b.portChangeHookCmd ?? null,
+      driverMode: b.driverMode,
+      vlessReality: b.vlessReality,
+    });
     return { id };
   });
 
