@@ -109,7 +109,8 @@ function buildExportConfigText(
   lines.push("DNS = $PRIMARY_DNS, $SECONDARY_DNS", `PrivateKey = ${parsed.privateKey}`);
   for (const k of AWG_CONF_LINE_ORDER) {
     const v = awgFlat[k] ?? "";
-    lines.push(`${k} = ${v}`);
+    /** Пустые `S3 = ` / `I1 = ` ломают разбор в Amnezia; на сервере в .conf таких строк нет (formatAwgInterfaceLines). */
+    if (v.length > 0) lines.push(`${k} = ${v}`);
   }
   lines.push("", "[Peer]", `PublicKey = ${parsed.peerPublicKey}`);
   if (parsed.presharedKey.length > 0) {
@@ -139,7 +140,8 @@ export function buildAmneziaAwgVpnRoot(input: AmneziaAwgVpnRootInput): Record<st
   const port = input.listenPort;
   const inner: Record<string, unknown> = {};
   for (const k of AWG_JSON_PARAM_ORDER) {
-    inner[k] = awgFlat[k] ?? "";
+    const v = awgFlat[k] ?? "";
+    if (v.length > 0) inner[k] = v;
   }
   const allowedIpList = parsed.allowedIps
     .split(",")
@@ -160,7 +162,8 @@ export function buildAmneziaAwgVpnRoot(input: AmneziaAwgVpnRootInput): Record<st
   const lastConfig = JSON.stringify(inner, null, 4);
   const awgTop: Record<string, unknown> = {};
   for (const k of AWG_JSON_PARAM_ORDER) {
-    awgTop[k] = awgFlat[k] ?? "";
+    const v = awgFlat[k] ?? "";
+    if (v.length > 0) awgTop[k] = v;
   }
   awgTop.last_config = lastConfig;
   awgTop.port = String(port);
