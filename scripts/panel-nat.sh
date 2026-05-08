@@ -28,18 +28,18 @@ run_ipt() {
 case "$ACTION" in
 up)
   sysctl -w "net.ipv4.conf.$IFACE.rp_filter=0" 2>/dev/null || true
-  run_ipt -I FORWARD 1 -i "$IFACE" -j ACCEPT
-  run_ipt -I FORWARD 1 -o "$IFACE" -j ACCEPT
-  run_ipt -I DOCKER-USER 1 -i "$IFACE" -j RETURN 2>/dev/null || true
-  run_ipt -I DOCKER-USER 1 -o "$IFACE" -j RETURN 2>/dev/null || true
-  run_ipt -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE
+  run_ipt -C FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null || run_ipt -I FORWARD 1 -i "$IFACE" -j ACCEPT
+  run_ipt -C FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null || run_ipt -I FORWARD 1 -o "$IFACE" -j ACCEPT
+  run_ipt -C DOCKER-USER -i "$IFACE" -j RETURN 2>/dev/null || run_ipt -I DOCKER-USER 1 -i "$IFACE" -j RETURN 2>/dev/null || true
+  run_ipt -C DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null || run_ipt -I DOCKER-USER 1 -o "$IFACE" -j RETURN 2>/dev/null || true
+  run_ipt -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || run_ipt -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE
   ;;
 down)
-  run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || true
-  run_ipt -D DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null || true
-  run_ipt -D DOCKER-USER -i "$IFACE" -j RETURN 2>/dev/null || true
-  run_ipt -D FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null || true
-  run_ipt -D FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null || true
+  while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done
+  while run_ipt -D DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null; do :; done
+  while run_ipt -D DOCKER-USER -i "$IFACE" -j RETURN 2>/dev/null; do :; done
+  while run_ipt -D FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null; do :; done
+  while run_ipt -D FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null; do :; done
   sysctl -w "net.ipv4.conf.$IFACE.rp_filter=2" 2>/dev/null || true
   ;;
 *)
