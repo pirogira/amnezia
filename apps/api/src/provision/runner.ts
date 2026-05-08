@@ -342,7 +342,7 @@ export async function runProvisionAmneziaAwg(
       vpnSubnetCidr: input.vpnSubnetCidr,
       listenPort: 51820,
       awgParams,
-      omitPostUp: true,
+      omitPostUp: false,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

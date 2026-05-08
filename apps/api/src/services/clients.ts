@@ -97,6 +97,8 @@ export async function createVpnClient(server: ServerRow, body: CreateClientReque
   const now = new Date().toISOString();
   const privEnc = encryptSecret(created.privateKey, getEncryptionMaster());
   const confEnc = encryptSecret(created.clientConf, getEncryptionMaster());
+  const storedListenPort =
+    body.protocol === "wireguard" || body.protocol === "amneziawg" ? server.listen_port : body.listenPort;
 
   db.prepare(
     `INSERT INTO vpn_clients (
@@ -112,7 +114,7 @@ export async function createVpnClient(server: ServerRow, body: CreateClientReque
     privEnc,
     confEnc,
     created.assignedIp,
-    body.listenPort,
+    storedListenPort,
     JSON.stringify(body.security),
     server.endpoint_host,
     null,
@@ -126,7 +128,7 @@ export async function createVpnClient(server: ServerRow, body: CreateClientReque
       vpnUri = buildAmneziaVpnUriForAwgClient(
         server.name,
         serverForWg,
-        body.listenPort,
+        server.listen_port,
         created.publicKey,
         created.clientConf,
         body.security.dns,

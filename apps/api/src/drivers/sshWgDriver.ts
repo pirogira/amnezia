@@ -56,7 +56,7 @@ export const sshWgDriver: VpnDriver = {
       assignedIp,
       serverPublicKey: serverPub.trim(),
       endpoint: server.endpoint_host,
-      listenPort: body.listenPort,
+      listenPort: server.listen_port,
       security: { ...body.security, presharedKey: psk },
       awgNativeParams: awgNative,
       protocol: body.protocol,
