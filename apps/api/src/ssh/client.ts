@@ -136,9 +136,11 @@ export async function dockerExecWgPubkey(
 export async function dockerResolveWgIface(auth: SshAuth, container: string, prefer: string): Promise<string> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(prefer, SAFE_IFACE, "iface");
-  const cmd = `docker exec ${shellQuote(container)} wg show`;
-  const r = await execRemote(auth, cmd);
-  if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
+  let r = await execRemote(auth, `docker exec ${shellQuote(container)} wg show`);
+  if (r.code !== 0 || !/^\s*interface:/m.test(r.stdout)) {
+    r = await execRemote(auth, `docker exec ${shellQuote(container)} awg show`);
+  }
+  if (r.code !== 0) throw new Error(`wg/awg show failed: ${r.stderr || r.stdout}`);
   const names: string[] = [];
   const re = /^interface:\s*(\S+)/gm;
   let m: RegExpExecArray | null;

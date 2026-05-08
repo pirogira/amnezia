@@ -5,6 +5,9 @@ import type { ServerRow } from "../drivers/types.js";
 import { changeServerListenPort } from "../services/portChange.js";
 import { insertVpnServerRecord } from "../services/vpnServerInsert.js";
 import { runProvisionAmneziaAwg } from "../provision/runner.js";
+import { writeAudit } from "../audit.js";
+import type { SshAuth } from "../ssh/client.js";
+import { discoverWgDockerOnHost } from "../ssh/discoverWgDocker.js";
 import { parseVlessRealityJson } from "../vlessUri.js";
 
 const vlessRealityShape = z
@@ -55,6 +58,32 @@ const serverCreate = z
 const portBody = z.object({
   port: z.coerce.number().int().min(1024).max(65535),
 });
+
+const discoverWgDockerBody = z
+  .object({
+    sshHost: z.string().min(1).max(255),
+    sshPort: z.coerce.number().int().min(1).max(65535).default(22),
+    sshUser: z.string().min(1).max(64),
+    sshPrivateKey: z.string().max(65535).default(""),
+    sshPassword: z.string().max(2048).default(""),
+  })
+  .superRefine((b, ctx) => {
+    if (!b.sshPrivateKey.trim() && !b.sshPassword.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Для SSH укажите приватный ключ (OpenSSH/RSA PEM) или пароль.",
+        path: ["sshPrivateKey"],
+      });
+    }
+  });
+
+function sshAuthFromDiscoverBody(b: z.infer<typeof discoverWgDockerBody>): SshAuth {
+  const pwd = b.sshPassword.trim();
+  if (pwd) {
+    return { host: b.sshHost, port: b.sshPort, username: b.sshUser, password: pwd };
+  }
+  return { host: b.sshHost, port: b.sshPort, username: b.sshUser, privateKey: b.sshPrivateKey.trim() };
+}
 
 const serverProvision = z
   .object({
@@ -124,6 +153,37 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
       });
     }
     return { id: result.serverId, steps: result.steps };
+  });
+
+  app.post("/servers/discover-wg-docker", async (req, reply) => {
+    const sub = await requireUser(req, reply);
+    if (!sub) return;
+    const parsed = discoverWgDockerBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+    const b = parsed.data;
+    const auth = sshAuthFromDiscoverBody(b);
+    const out = await discoverWgDockerOnHost(auth);
+    writeAudit(sub, "server_discover_wg_docker", {
+      sshHost: b.sshHost,
+      ok: out.ok,
+      ...(out.ok
+        ? { container: out.dockerWgContainer, listenPort: out.listenPort, iface: out.wgInterface }
+        : { tried: out.triedContainers }),
+    });
+    if (!out.ok) {
+      return reply.code(404).send({
+        error: "not_found",
+        message: out.message,
+        triedContainers: out.triedContainers,
+      });
+    }
+    return {
+      dockerWgContainer: out.dockerWgContainer,
+      wgInterface: out.wgInterface,
+      listenPort: out.listenPort,
+      vpnSubnetCidr: out.vpnSubnetCidr,
+      image: out.image,
+    };
   });
 
   app.get("/servers", async (req, reply) => {

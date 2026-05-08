@@ -678,6 +678,8 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
   const [hook, setHook] = useState("");
   const [vlessJson, setVlessJson] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [discoverBusy, setDiscoverBusy] = useState(false);
+  const [discoverMsg, setDiscoverMsg] = useState<string | null>(null);
 
   return (
     <form
@@ -685,6 +687,7 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
       onSubmit={async (e) => {
         e.preventDefault();
         setMsg(null);
+        setDiscoverMsg(null);
         let vlessReality: VlessReality | undefined;
         if (vlessJson.trim()) {
           try {
@@ -764,9 +767,85 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
           placeholder="пароль пользователя SSH — не пароль панели"
         />
       </div>
-      <div className="field">
+      <div className="field" style={{ flex: "1 1 280px" }}>
         <label>Docker контейнер WG</label>
-        <input value={container} onChange={(e) => setContainer(e.target.value)} />
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "stretch", flexWrap: "wrap" }}>
+          <input
+            value={container}
+            onChange={(e) => setContainer(e.target.value)}
+            style={{ flex: "1 1 160px", minWidth: 0 }}
+          />
+          <button
+            type="button"
+            className="btn"
+            disabled={driverMode !== "ssh" || discoverBusy}
+            title={
+              driverMode !== "ssh"
+                ? "Переключите режим драйвера на ssh"
+                : "По SSH: найти контейнер с wg/awg, интерфейс и UDP-порт"
+            }
+            onClick={async () => {
+              if (driverMode !== "ssh") return;
+              setDiscoverMsg(null);
+              setDiscoverBusy(true);
+              try {
+                const tok = getToken();
+                const res = await fetch("/api/servers/discover-wg-docker", {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
+                  },
+                  body: JSON.stringify({
+                    sshHost,
+                    sshPort,
+                    sshUser,
+                    sshPrivateKey: sshKey,
+                    sshPassword,
+                  }),
+                });
+                const j = (await res.json().catch(() => ({}))) as {
+                  dockerWgContainer?: string;
+                  wgInterface?: string;
+                  listenPort?: number;
+                  vpnSubnetCidr?: string | null;
+                  image?: string;
+                  message?: string;
+                  error?: string;
+                };
+                if (!res.ok) {
+                  setDiscoverMsg(j.message ?? j.error ?? `HTTP ${res.status}`);
+                  return;
+                }
+                if (j.dockerWgContainer) setContainer(j.dockerWgContainer);
+                if (j.wgInterface) setWgInterface(j.wgInterface);
+                if (typeof j.listenPort === "number") setListenPort(j.listenPort);
+                if (j.vpnSubnetCidr) setCidr(j.vpnSubnetCidr);
+                setDiscoverMsg(
+                  j.image
+                    ? `Определено: контейнер «${j.dockerWgContainer}», интерфейс ${j.wgInterface}, UDP ${j.listenPort}. Образ: ${j.image}`
+                    : `Определено: «${j.dockerWgContainer}», ${j.wgInterface}, UDP ${j.listenPort}`,
+                );
+              } catch (er) {
+                setDiscoverMsg(er instanceof Error ? er.message : String(er));
+              } finally {
+                setDiscoverBusy(false);
+              }
+            }}
+          >
+            {discoverBusy ? "…" : "Авто"}
+          </button>
+        </div>
+        {driverMode !== "ssh" && (
+          <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.8rem" }}>
+            Автоопределение доступно только в режиме <strong>ssh</strong>.
+          </p>
+        )}
+        {discoverMsg && (
+          <p className={discoverMsg.startsWith("Определено") ? "muted" : "error"} style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+            {discoverMsg}
+          </p>
+        )}
       </div>
       <div className="field">
         <label>Интерфейс (wg0 или awg0)</label>
