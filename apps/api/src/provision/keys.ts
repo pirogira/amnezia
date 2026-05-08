@@ -2,8 +2,10 @@ import { randomInt } from "node:crypto";
 import { x25519 } from "@noble/curves/ed25519.js";
 
 /**
- * Диапазоны как у AmneziaWG 2.0 (см. bivlked/amneziawg-installer ADVANCED: Jmin 40–89, S3/S4, S1+56≠S2, разные H1–H4).
- * Десятичные uint32 для H* (не hex) — иначе `wg setconf` в контейнере падает.
+ * Обфускация в духе Amnezia (Jmin 40–89, S1/S2, разные H1–H4; S1+56≠S2).
+ * Поля S3/S4 из AWG 2.0 в конфиг не пишем: в образе amneziavpn/amnezia-wg `wg-quick` вызывает
+ * обычный `wg setconf`, он не понимает `S3`/`S4` → «Line unrecognized».
+ * Десятичные uint32 для H* (не hex).
  */
 const H_MAGIC_MIN = 100_000;
 const H_MAGIC_MAX_EXCLUSIVE = 2_000_000_001;
@@ -17,7 +19,7 @@ function fourDistinctMagicHeaders(): [string, string, string, string] {
   return [String(arr[0]), String(arr[1]), String(arr[2]), String(arr[3])];
 }
 
-/** Случайные параметры AmneziaWG 2.0 для .conf (сервер и клиенты должны совпадать). */
+/** Случайные параметры AmneziaWG для .conf (совместимо с `wg setconf` в Docker-образе). */
 export function generateAwgObfuscationParams(): Record<string, string> {
   const jc = String(randomInt(3, 7));
   const jminN = randomInt(40, 90);
@@ -29,8 +31,6 @@ export function generateAwgObfuscationParams(): Record<string, string> {
     s2N = s1N + 57 <= 150 ? s1N + 57 : s1N - 1;
     if (s2N < 15) s2N = 15;
   }
-  const s3 = String(randomInt(8, 56));
-  const s4 = String(randomInt(4, 28));
   const [h1, h2, h3, h4] = fourDistinctMagicHeaders();
   return {
     Jc: jc,
@@ -38,8 +38,6 @@ export function generateAwgObfuscationParams(): Record<string, string> {
     Jmax: jmax,
     S1: String(s1N),
     S2: String(s2N),
-    S3: s3,
-    S4: s4,
     H1: h1,
     H2: h2,
     H3: h3,
