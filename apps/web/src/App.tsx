@@ -596,6 +596,12 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
               if (evName === "step_start" && typeof ev.label === "string") {
                 setProgressLabel(String(ev.label));
               }
+              if (evName === "wait_wg_pulse") {
+                const sec = typeof ev.elapsedSec === "number" ? ev.elapsedSec : 0;
+                const base =
+                  typeof ev.label === "string" ? String(ev.label) : "Ожидание интерфейса WireGuard";
+                setProgressLabel(`${base} (${sec}s)`);
+              }
               if (evName === "step_end" && typeof ev.pct === "number") {
                 setProgressPct(Math.min(100, Math.max(0, Number(ev.pct))));
               }

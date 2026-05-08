@@ -116,21 +116,29 @@ export async function dockerWaitUntilRunning(
 /**
  * Выполняет SSH-команду; если Docker отвечает, что контейнер перезапускается, ждёт running и повторяет exec.
  */
+export type ExecRemoteAfterContainerOpts = {
+  /** По умолчанию 40×2s; для плотных циклов (провижн) — меньше, чтобы не «висеть» внутри одного await. */
+  waitRunningMaxAttempts?: number;
+  maxOuterRetries?: number;
+};
+
 export async function execRemoteAfterContainerRunning(
   auth: SshAuth,
   container: string,
   command: string,
   stdin?: string,
+  opts?: ExecRemoteAfterContainerOpts,
 ): Promise<ExecRemoteResult> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
-  const maxOuter = 12;
+  const maxOuter = opts?.maxOuterRetries ?? 12;
+  const waitAttempts = opts?.waitRunningMaxAttempts ?? 40;
   let last = await execRemote(auth, command, stdin);
   for (let i = 0; i < maxOuter; i++) {
     const combined = `${last.stderr}${last.stdout}`;
     if (last.code === 0 || !dockerDaemonReportsContainerRestarting(combined)) {
       return last;
     }
-    const w = await dockerWaitUntilRunning(auth, container, { maxAttempts: 40, delayMs: 2000 });
+    const w = await dockerWaitUntilRunning(auth, container, { maxAttempts: waitAttempts, delayMs: 2000 });
     if (!w.ok) {
       return {
         stdout: last.stdout,

@@ -130,6 +130,23 @@ export async function runProvisionAmneziaAwg(
   let totalSteps = 7;
   let stepIndex = 0;
 
+  /** Пока идёт wait_wg, шлём пульсы — иначе UI «зависает» на одном проценте на десятки минут. */
+  const withWaitWgPulse = (runInner: () => Promise<StepResult>): Promise<StepResult> => {
+    const t0 = Date.now();
+    const pulse = setInterval(() => {
+      emit?.({
+        event: "wait_wg_pulse",
+        elapsedSec: Math.round((Date.now() - t0) / 1000),
+        step: "wait_wg",
+        label: STEP_LABELS.wait_wg,
+        index: stepIndex,
+        total: totalSteps,
+        pct: Math.round((100 * (stepIndex - 1)) / totalSteps),
+      });
+    }, 5_000);
+    return runInner().finally(() => clearInterval(pulse));
+  };
+
   const push = (step: string, r: StepResult, durationMs?: number) => {
     const label = STEP_LABELS[step] ?? step;
     steps.push({
@@ -254,7 +271,9 @@ export async function runProvisionAmneziaAwg(
     const ifaceRow = steps.find((s) => s.step === "resolve_iface");
     const iface = ifaceRow?.message ?? "awg0";
 
-    dr = await runStep("wait_wg", () => stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, iface));
+    dr = await runStep("wait_wg", () =>
+      withWaitWgPulse(() => stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, iface)),
+    );
     if (!dr.ok) return { ok: false, steps, message: dr.message };
 
     const prefix = await dockerDetectIfaceSlash24Prefix(auth, PROVISION_CONTAINER_NAME, iface);
@@ -337,7 +356,9 @@ export async function runProvisionAmneziaAwg(
   dr = await runStep("compose_up", () => stepDockerComposeUp(auth));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
 
-  dr = await runStep("wait_wg", () => stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, "awg0"));
+  dr = await runStep("wait_wg", () =>
+    withWaitWgPulse(() => stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, "awg0")),
+  );
   if (!dr.ok) return { ok: false, steps, message: dr.message };
   const wgIfaceNew = dr.ok && dr.detail ? dr.detail : "awg0";
 

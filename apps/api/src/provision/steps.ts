@@ -110,24 +110,54 @@ function parseWgInterfaces(stdout: string): string[] {
   return names;
 }
 
+const WG_SHOW_PUBLIC_KEY = /\bpublic\s*key\s*:/i;
+
+/** Укороченные ретраи: иначе один «restarting» держит await минутами, UI и дедлайн шага не продвигаются. */
+const WG_WAIT_EXEC_OPTS = { waitRunningMaxAttempts: 12, maxOuterRetries: 4 } as const;
+
+function wgListExeOrder(preferred: string): readonly ["awg", "wg"] | readonly ["wg", "awg"] {
+  return /^awg\d+$/.test(preferred) ? (["awg", "wg"] as const) : (["wg", "awg"] as const);
+}
+
+function wgIfaceExeOrder(iface: string): readonly ["awg", "wg"] | readonly ["wg", "awg"] {
+  return /^awg\d+$/.test(iface) ? (["awg", "wg"] as const) : (["wg", "awg"] as const);
+}
+
 /** Поднялся ли интерфейс с публичным ключом (деталь = имя интерфейса для БД). */
 export async function stepWaitWgShow(auth: SshAuth, container: string, preferred: string): Promise<StepResult> {
   if (!SAFE_CONTAINER.test(container)) throw new Error("Invalid container");
   if (!SAFE_IFACE.test(preferred)) throw new Error("Invalid iface");
 
+  const deadline = Date.now() + 5 * 60 * 1000;
+
   await new Promise((res) => setTimeout(res, 3000));
-  const runningFirst = await dockerWaitUntilRunning(auth, container, { maxAttempts: 60, delayMs: 2000 });
+  if (Date.now() > deadline) {
+    return { ok: false, message: `Таймаут ожидания WireGuard в ${container} (лимит шага).` };
+  }
+
+  const runningFirst = await dockerWaitUntilRunning(auth, container, { maxAttempts: 45, delayMs: 2000 });
   if (!runningFirst.ok) return runningFirst;
 
-  const maxAttempts = 45;
+  const maxAttempts = 40;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (Date.now() > deadline) {
+      const logR = await execRemote(auth, `docker logs --tail 120 ${shellQuote(container)} 2>&1`);
+      const logs = trimCmdOut(logR.stdout || logR.stderr, 2500);
+      return {
+        ok: false,
+        message: `Таймаут ожидания WireGuard в ${container} (~5 мин). Интерфейс вроде ${preferred} не подтвердился (public key / awg). Логи:\n${logs}`,
+      };
+    }
+
     let listOut = "";
-    for (const listExe of ["wg", "awg"] as const) {
+    for (const listExe of wgListExeOrder(preferred)) {
       const lr = await execRemoteAfterContainerRunning(
         auth,
         container,
         `docker exec ${shellQuote(container)} ${shellQuote(listExe)} show`,
+        undefined,
+        WG_WAIT_EXEC_OPTS,
       );
       if (lr.code === 0 && /interface:/m.test(lr.stdout)) {
         listOut = lr.stdout;
@@ -150,13 +180,15 @@ export async function stepWaitWgShow(auth: SshAuth, container: string, preferred
 
     for (const iface of tryList) {
       if (!SAFE_IFACE.test(iface)) continue;
-      for (const exe of ["wg", "awg"] as const) {
+      for (const exe of wgIfaceExeOrder(iface)) {
         const r = await execRemoteAfterContainerRunning(
           auth,
           container,
           `docker exec ${shellQuote(container)} ${shellQuote(exe)} show ${shellQuote(iface)}`,
+          undefined,
+          WG_WAIT_EXEC_OPTS,
         );
-        if (r.code === 0 && r.stdout.includes("public key:")) {
+        if (r.code === 0 && WG_SHOW_PUBLIC_KEY.test(r.stdout)) {
           return { ok: true, detail: iface };
         }
       }
