@@ -33,8 +33,16 @@ echo "=== 4) Docker: контейнер, сеть, PID, capabilities ==="
 docker ps -a --filter "name=${CONTAINER}" --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' 2>&1 || true
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   echo "network_mode: $(docker inspect -f '{{.HostConfig.NetworkMode}}' "$CONTAINER" 2>/dev/null)"
-  echo "pid_mode: $(docker inspect -f '{{.HostConfig.PidMode}}' "$CONTAINER" 2>/dev/null)"
+  PM=$(docker inspect -f '{{.HostConfig.PidMode}}' "$CONTAINER" 2>/dev/null | tr -d '\r')
+  if [[ -z "$PM" ]]; then
+    echo "pid_mode: (пусто) = НЕ host → nsenter -t 1 -m не даст зайти в mount хоста; нужна строка pid: host в compose"
+  else
+    echo "pid_mode: $PM"
+  fi
   echo "cap_add: $(docker inspect -f '{{.HostConfig.CapAdd}}' "$CONTAINER" 2>/dev/null)"
+  if ! docker inspect -f '{{.HostConfig.CapAdd}}' "$CONTAINER" 2>/dev/null | grep -q SYS_ADMIN; then
+    echo "ВНИМАНИЕ: нет CAP_SYS_ADMIN → nsenter в mount-ns init будет Operation not permitted; добавьте в compose."
+  fi
   echo "privileged: $(docker inspect -f '{{.HostConfig.Privileged}}' "$CONTAINER" 2>/dev/null)"
 fi
 
@@ -54,6 +62,14 @@ docker exec "$CONTAINER" sh -c 'nsenter -t 1 -m -- /usr/sbin/iptables-legacy -L 
 echo ""
 echo "=== 7) Из контейнера: legacy NAT POSTROUTING (через nsenter) ==="
 docker exec "$CONTAINER" sh -c 'nsenter -t 1 -m -- /usr/sbin/iptables-legacy -t nat -L POSTROUTING -n -v --line-numbers 2>&1 | head -30' 2>&1 || echo "exec failed"
+
+echo ""
+echo "=== 7b) На хосте напрямую: legacy NAT POSTROUTING (ищите MASQUERADE 10.8…) ==="
+if command -v iptables-legacy >/dev/null 2>&1; then
+  iptables-legacy -t nat -L POSTROUTING -n -v --line-numbers 2>&1 | head -25
+else
+  echo "iptables-legacy нет"
+fi
 
 echo ""
 echo "=== 8) Счётчики: сколько строк с ${IFACE} в legacy FORWARD ==="
