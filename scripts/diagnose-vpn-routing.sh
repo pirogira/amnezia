@@ -108,7 +108,13 @@ echo "=== 11) awg/wg show (туннель, handshake, transfer) ==="
 if docker exec "$CONTAINER" true 2>/dev/null; then
   EXE=wg
   if docker exec "$CONTAINER" sh -c 'command -v awg' >/dev/null 2>&1; then EXE=awg; fi
-  docker exec "$CONTAINER" "$EXE" show "$IFACE" 2>&1 || echo "wg/awg show failed"
+  WGOUT=$(docker exec "$CONTAINER" "$EXE" show "$IFACE" 2>&1) || WGOUT="wg/awg show failed"
+  echo "$WGOUT"
+  if echo "$WGOUT" | grep -qi '^peer:'; then
+    echo "(peer в выводе есть — ок для проверки туннеля)"
+  else
+    echo "ВНИМАНИЕ: нет секции peer — клиент не подключён; включите VPN на клиенте и повторите скрипт."
+  fi
 else
   echo "контейнер ${CONTAINER} недоступен"
 fi
@@ -133,6 +139,18 @@ echo "--- iptables-legacy ---"
 iptables-legacy -L FORWARD -n -v --line-numbers 2>&1 | head -12 || true
 
 echo ""
+echo "=== 16) iptables (nft) NAT POSTROUTING — если тут растут счётчики, SNAT может идти через nft, не legacy ==="
+iptables -t nat -L POSTROUTING -n -v --line-numbers 2>&1 | head -22 || true
+
+echo ""
+echo "=== 17) nftables: фрагмент ruleset (10.8 / masquerade), если установлен nft ==="
+if command -v nft >/dev/null 2>&1; then
+  nft list ruleset 2>/dev/null | grep -iE '10\.8\.|masquerade|snat|postrouting' | head -35 || echo "(совпадений нет)"
+else
+  echo "команда nft не найдена"
+fi
+
+echo ""
 echo "=== Как интерпретировать (кратко) ==="
 echo "A) П.5 FAIL → нет pid:host и/или privileged (nsenter /proc/1/ns/mnt)."
 echo "B) П.6–7 нет ACCEPT/MASQUERADE для ${IFACE} / 10.8.x → PostUp/panel-nat (П.14)."
@@ -140,3 +158,4 @@ echo "C) П.11 transfer не растёт при серфинге → порт/�
 echo "D) П.11 transfer растёт, сайтов нет → DNS на клиенте или блок у оператора."
 echo "E) pid_mode не host → в compose pid: host."
 echo "F) Дубликаты MASQUERADE (П.7) — после стабилизации: остановить контейнер, awg-quick down, цикл iptables-legacy -D … или один чистый пересоздать правила."
+echo "G) П.7 MASQUERADE 0 bytes, а П.16 (nft nat) растёт — SNAT в nft; тогда либо оставить как есть (если интернет есть), либо выровнять правила под один backend."
