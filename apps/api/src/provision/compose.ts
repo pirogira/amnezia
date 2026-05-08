@@ -18,21 +18,23 @@ export function buildProvisionComposeYaml(): string {
    * правила iptables на хосте.
    * Не задавать sysctls здесь: при network_mode: host runc отклоняет net.ipv4.ip_forward.
    * Включение forwarding на VPS делает stepEnableIpv4Forward до compose up.
-   * Бинарь iptables-legacy с хоста: в образе amnezia-wg часто только nft-iptables, PostUp тогда
-   * пишет не в те таблицы, где Docker держит FORWARD (см. «iptables-legacy tables present»).
+   * `pid: host` — PID 1 в контейнере это init хоста; panel-nat.sh вызывает iptables через
+   * `nsenter -t 1 -m` (mount-ns хоста), иначе бинарь из образа пишет в nft, а Docker — в legacy.
+   * `SYS_ADMIN` нужен для nsenter в mount namespace init (см. CAP в доке Docker).
    */
   return `services:
   ${PROVISION_CONTAINER_NAME}:
     image: ${AMNEZIA_WG_IMAGE}
     container_name: ${PROVISION_CONTAINER_NAME}
     network_mode: host
+    pid: host
     cap_add:
       - NET_ADMIN
+      - SYS_ADMIN
     devices:
       - /dev/net/tun
     volumes:
       - ${PROVISION_AWG_DIR}:/etc/wireguard
-      - /usr/sbin/iptables-legacy:/usr/sbin/iptables-legacy:ro
     command:
       - /bin/sh
       - -c

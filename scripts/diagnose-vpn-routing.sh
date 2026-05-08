@@ -29,11 +29,12 @@ echo "=== 4) Docker: контейнер VPN ==="
 docker ps -a --filter "name=${CONTAINER}" --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' 2>&1 || true
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   echo "network_mode: $(docker inspect -f '{{.HostConfig.NetworkMode}}' "$CONTAINER" 2>/dev/null)"
+  echo "pid_mode: $(docker inspect -f '{{.HostConfig.PidMode}}' "$CONTAINER" 2>/dev/null)"
 fi
 
 echo ""
-echo "=== 4b) iptables-legacy внутри контейнера (должен быть с хоста bind-mount, иначе только nft) ==="
-docker exec "$CONTAINER" sh -c 'ls -la /usr/sbin/iptables-legacy 2>&1; /usr/sbin/iptables-legacy -V 2>&1' 2>&1 || echo "exec failed"
+echo "=== 4b) nsenter + хостовый iptables-legacy (нужны pid:host и SYS_ADMIN в compose) ==="
+docker exec "$CONTAINER" sh -c 'command -v nsenter; nsenter -t 1 -m test -x /usr/sbin/iptables-legacy && nsenter -t 1 -m -- /usr/sbin/iptables-legacy -V' 2>&1 || echo "exec failed"
 
 echo ""
 echo "=== 5) Интерфейс ${IFACE} на хосте (network_mode: host — интерфейс на хосте) ==="
@@ -93,5 +94,5 @@ echo "=== Как читать результат (кратко) ==="
 echo "- П.2: ip_forward=0 → форвардинг выключен, клиентский трафик не пойдёт."
 echo "- П.6: latest handshake есть, rx/tx растут при включённом VPN и серфинге → туннель жив; если 0 — нет обмена с клиентом."
 echo "- П.8b/9b (legacy): при включённом VPN bytes на правилах FORWARD/NAT для ${IFACE} должны расти."
-echo "- Если в 8a есть awg0, а в 8b нет — PostUp писал в «не тот» iptables (см. panel-nat: legacy первым)."
+echo "- П.4b: nsenter + iptables-legacy с PID 1 — должно работать при pid:host и CAP_SYS_ADMIN."
 echo "- П.7: нет panel-nat.sh → старый awg0.conf или ручная установка без скрипта панели."
