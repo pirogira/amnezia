@@ -2,10 +2,9 @@
 export const PANEL_WG_NAT_SCRIPT_BASENAME = "panel-nat.sh";
 
 /**
- * FORWARD / DOCKER-USER и **MASQUERADE** — один путь **`iptables-legacy`** через `nsenter` (как у Docker на Ubuntu).
- * Иначе при «iptables-legacy tables present» SNAT остаётся в **nf_tables** (`iptables -t nat`), а форвард — в **legacy**:
- * правила в `iptables -L` показывают **0 pkts**, интернета у VPN нет.
- * Дополнительно **nft**: `iifname` туннеля в `ip nat` postrouting (если есть `nft`).
+ * FORWARD / DOCKER-USER — **iptables-legacy** через `nsenter` (как у Docker).
+ * **MASQUERADE**: сначала **`iptables` (nf_tables)** через `nsenter` — туда же, что правила Docker;
+ * затем то же в **iptables-legacy** (часть ядер реально NATит только legacy). Без `ip nat` в `nft`, CLI `nft insert` не используется.
  */
 export function buildPanelWgNatScript(): string {
   return [
@@ -84,37 +83,41 @@ export function buildPanelWgNatScript(): string {
     '    echo "panel-nat: nft masquerade (iifname) skipped or failed" >&2',
     "  fi",
     "  WAN_DEV=$(wan_dev4)",
+    '  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then',
+    '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
+    '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
+    '    if [ -n "$WAN_DEV" ]; then',
+    '      while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
+    '      nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE',
+    "    else",
+    '      echo "panel-nat: no IPv4 default route dev; nf_tables NAT without -o" >&2',
+    '      nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE',
+    "    fi",
+    "  fi",
     '  while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
     '  while run_ipt -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
     '  if [ -n "$WAN_DEV" ]; then',
     '    while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
     '    run_ipt -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null || run_ipt -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE',
     "  else",
-    '    echo "panel-nat: no IPv4 default route dev; NAT without -o" >&2',
+    '    echo "panel-nat: no IPv4 default route dev; legacy NAT without -o" >&2',
     '    run_ipt -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || run_ipt -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE',
-    "  fi",
-    '  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then',
-    '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
-    '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
-    '    if [ -n "$WAN_DEV" ]; then',
-    '      while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
-    "    fi",
     "  fi",
     "  ;;",
     "down)",
     "  nft_masq_down",
     "  WAN_DEV=$(wan_dev4)",
-    '  while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
-    '  while run_ipt -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
-    '  if [ -n "$WAN_DEV" ]; then',
-    '    while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
-    "  fi",
     '  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then',
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
     '    if [ -n "$WAN_DEV" ]; then',
     '      while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
     "    fi",
+    "  fi",
+    '  while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
+    '  while run_ipt -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
+    '  if [ -n "$WAN_DEV" ]; then',
+    '    while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
     "  fi",
     '  while run_ipt -D DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null; do :; done',
     '  while run_ipt -D DOCKER-USER -i "$IFACE" -j RETURN 2>/dev/null; do :; done',
