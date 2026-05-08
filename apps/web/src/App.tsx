@@ -201,7 +201,7 @@ export function App() {
             }}
           />
         )}
-        <div style={{ marginTop: "0.75rem" }}>
+        <div style={{ marginTop: "0.75rem", display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
           <label className="muted">Активный сервер: </label>
           <select
             value={activeServerId ?? ""}
@@ -213,11 +213,36 @@ export function App() {
             ) : (
               servers.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name} ({s.driverMode})
+                  {s.name}
                 </option>
               ))
             )}
           </select>
+          <button
+            type="button"
+            className="btn"
+            disabled={!activeServerId || servers.length === 0}
+            onClick={async () => {
+              const sid = activeServerId;
+              if (!sid) return;
+              const s = servers.find((x) => x.id === sid);
+              if (!window.confirm(`Удалить сервер «${s?.name ?? sid}» и всех его клиентов из панели?`)) return;
+              try {
+                await api<{ ok: boolean }>(`/api/servers/${sid}`, { method: "DELETE" });
+                const list = await api<Server[]>("/api/servers");
+                setServers(list);
+                setActiveServerId((prev) =>
+                  prev === sid ? (list[0]?.id ?? null) : prev && list.some((x) => x.id === prev) ? prev : (list[0]?.id ?? null),
+                );
+                setLastConf(null);
+                setLastVpnUri(null);
+              } catch (e) {
+                window.alert(e instanceof Error ? e.message : String(e));
+              }
+            }}
+          >
+            Удалить сервер
+          </button>
         </div>
       </div>
 
@@ -766,7 +791,6 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
   const [cidr, setCidr] = useState("10.8.0.0/24");
   const [endpoint, setEndpoint] = useState("");
   const [listenPort, setListenPort] = useState(51820);
-  const [driverMode, setDriverMode] = useState<"ssh" | "mock">("mock");
   const [composePath, setComposePath] = useState("");
   const [hook, setHook] = useState("");
   const [vlessJson, setVlessJson] = useState("");
@@ -805,7 +829,7 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
             vpnSubnetCidr: cidr,
             endpointHost: endpoint || sshHost,
             listenPort,
-            driverMode,
+            driverMode: "ssh" as const,
             dockerComposePath: composePath || null,
             portChangeHookCmd: hook || null,
             vlessReality,
@@ -871,14 +895,9 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
           <button
             type="button"
             className="btn"
-            disabled={driverMode !== "ssh" || discoverBusy}
-            title={
-              driverMode !== "ssh"
-                ? "Переключите режим драйвера на ssh"
-                : "По SSH: найти контейнер с wg/awg, интерфейс и UDP-порт"
-            }
+            disabled={discoverBusy}
+            title="По SSH: найти контейнер с wg/awg, интерфейс и UDP-порт"
             onClick={async () => {
-              if (driverMode !== "ssh") return;
               setDiscoverMsg(null);
               setDiscoverBusy(true);
               try {
@@ -929,11 +948,6 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
             {discoverBusy ? "…" : "Авто"}
           </button>
         </div>
-        {driverMode !== "ssh" && (
-          <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.8rem" }}>
-            Автоопределение доступно только в режиме <strong>ssh</strong>.
-          </p>
-        )}
         {discoverMsg && (
           <p className={discoverMsg.startsWith("Определено") ? "muted" : "error"} style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
             {discoverMsg}
@@ -962,13 +976,6 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
           value={listenPort}
           onChange={(e) => setListenPort(Number(e.target.value))}
         />
-      </div>
-      <div className="field">
-        <label>Режим драйвера</label>
-        <select value={driverMode} onChange={(e) => setDriverMode(e.target.value as "ssh" | "mock")}>
-          <option value="mock">mock (без SSH)</option>
-          <option value="ssh">ssh (реальный VPS)</option>
-        </select>
       </div>
       <div className="field" style={{ flex: "1 1 220px" }}>
         <label>docker compose path (префлайт)</label>
@@ -1019,7 +1026,6 @@ function ClientForm(props: {
   const [protocol, setProtocol] = useState<VpnProtocol>("amneziawg");
   const [dns, setDns] = useState("1.1.1.1");
   const [junkCount, setJunkCount] = useState<number | "">("");
-  const [routeIpv6, setRouteIpv6] = useState(false);
   const [mtu, setMtu] = useState<number | "">("");
   const [expires, setExpires] = useState("");
   const [clientErr, setClientErr] = useState<string | null>(null);
@@ -1036,7 +1042,6 @@ function ClientForm(props: {
           const security: Record<string, unknown> = {};
           if (dns) security.dns = dns;
           if (junkCount !== "") security.junkPacketCount = Number(junkCount);
-          if (routeIpv6) security.includeIpv6DefaultRoute = true;
           if (mtu !== "") security.mtu = Number(mtu);
           const r = await api<{ clientConf: string; id: string; assignedIp: string; vpnUri?: string }>(
             `/api/servers/${props.server.id}/clients`,
@@ -1085,7 +1090,7 @@ function ClientForm(props: {
       )}
       {protocol === "amneziawg" && (
         <p className="muted" style={{ width: "100%", fontSize: "0.85rem" }}>
-          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code>. По умолчанию только IPv4 (<code>0.0.0.0/0</code>) и MTU 1280. Подсеть клиента берётся с интерфейса в Docker (<code>ip addr</code>), если в карточке сервера CIDR другой — иначе часто «VPN подключён, интернета нет». После создания — <code>vpn://…</code>.
+          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code>. По умолчанию полный туннель IPv4 и IPv6 (<code>0.0.0.0/0</code>, <code>::/0</code>) и MTU 1280. Подсеть клиента берётся с интерфейса в Docker (<code>ip addr</code>), если в карточке сервера CIDR другой — иначе часто «VPN подключён, интернета нет». Отключить только IPv6 можно полем <code>includeIpv6DefaultRoute: false</code> в теле API создания клиента. После создания — <code>vpn://…</code>.
         </p>
       )}
       <p className="muted" style={{ width: "100%", margin: 0, fontSize: "0.88rem" }}>
@@ -1106,12 +1111,6 @@ function ClientForm(props: {
               onChange={(e) => setJunkCount(e.target.value === "" ? "" : Number(e.target.value))}
               placeholder="опционально"
             />
-          </div>
-          <div className="field" style={{ flex: "1 1 100%", alignItems: "flex-start" }}>
-            <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", cursor: "pointer" }}>
-              <input type="checkbox" checked={routeIpv6} onChange={(e) => setRouteIpv6(e.target.checked)} />
-              Маршрут IPv6 (<code>::/0</code>) — только если на сервере настроен IPv6 через VPN
-            </label>
           </div>
           <div className="field">
             <label>MTU (опционально)</label>

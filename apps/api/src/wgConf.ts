@@ -167,9 +167,9 @@ export function buildClientConf(params: {
   const native = Boolean(params.awgNativeParams && Object.keys(params.awgNativeParams).length > 0);
   const junkLines = native ? "" : formatJunkComments(params.security);
   const awgLines = native && params.awgNativeParams ? formatAwgInterfaceLines(params.awgNativeParams) : "";
-  /** Только IPv4: иначе при ::/0 весь IPv6 идёт в WG без v6-NAT на сервере — «подключено», но интернет «мёртвый». */
+  /** По умолчанию IPv4+IPv6; явный `includeIpv6DefaultRoute: false` — только IPv4 (если на сервере нет рабочего IPv6 через туннель). */
   const allowedIps =
-    params.security.includeIpv6DefaultRoute === true ? "0.0.0.0/0, ::/0" : "0.0.0.0/0";
+    params.security.includeIpv6DefaultRoute === false ? "0.0.0.0/0" : "0.0.0.0/0, ::/0";
   const mtuLine =
     params.security.mtu != null && params.security.mtu > 0
       ? `MTU = ${params.security.mtu}\n`

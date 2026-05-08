@@ -13,7 +13,7 @@ export interface SecurityProfile {
   /** Optional preshared key for WireGuard peer (if server supports). */
   presharedKey?: string;
   dns?: string;
-  /** Явно включить маршрут ::/0 (нужен рабочий IPv6/NAT на сервере). По умолчанию только 0.0.0.0/0. */
+  /** `false` — только 0.0.0.0/0; иначе (по умолчанию) добавляется ::/0. */
   includeIpv6DefaultRoute?: boolean;
   /** MTU [Interface]; для AmneziaWG без значения подставляется 1280 (накладные расходы протокола). */
   mtu?: number;

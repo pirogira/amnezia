@@ -41,12 +41,11 @@ const serverCreate = z
     dockerComposePath: z.string().max(512).nullable().optional(),
     composeServiceName: z.string().max(128).nullable().optional(),
     portChangeHookCmd: z.string().max(512).nullable().optional(),
-    driverMode: z.enum(["ssh", "mock"]).default("ssh"),
+    driverMode: z.literal("ssh").default("ssh"),
     /** Параметры Reality для экспорта vless:// (опционально). */
     vlessReality: vlessRealityShape,
   })
   .superRefine((b, ctx) => {
-    if (b.driverMode !== "ssh") return;
     if (!b.sshPrivateKey.trim() && !b.sshPassword.trim()) {
       ctx.addIssue({
         code: "custom",
@@ -262,6 +261,19 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
     const row = getDb().prepare(`SELECT * FROM vpn_servers WHERE id = ?`).get(id) as ServerRow | undefined;
     if (!row) return reply.code(404).send({ error: "not_found" });
     return sanitizeServer(row);
+  });
+
+  app.delete("/servers/:id", async (req, reply) => {
+    const sub = await requireUser(req, reply);
+    if (!sub) return;
+    const id = (req.params as { id: string }).id;
+    const row = getDb().prepare(`SELECT id, name FROM vpn_servers WHERE id = ?`).get(id) as
+      | { id: string; name: string }
+      | undefined;
+    if (!row) return reply.code(404).send({ error: "not_found" });
+    getDb().prepare(`DELETE FROM vpn_servers WHERE id = ?`).run(id);
+    writeAudit(sub, "server_delete", { serverId: row.id, name: row.name });
+    return { ok: true };
   });
 
   app.post("/servers/:id/listen-port", async (req, reply) => {
