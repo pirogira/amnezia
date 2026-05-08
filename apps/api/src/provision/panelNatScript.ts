@@ -3,7 +3,8 @@ export const PANEL_WG_NAT_SCRIPT_BASENAME = "panel-nat.sh";
 
 /**
  * FORWARD / DOCKER-USER — **iptables-legacy** (как у Docker на Ubuntu).
- * SNAT — **нативный `nft`** в `ip nat` / postrouting (nf_tables), без отдельного legacy-nat.
+ * SNAT — **нативный `nft`** (`iifname` туннеля) и дублирующий **iptables** по **`-i %i`**, не только по `ip saddr` подсети:
+ * с userspace `amneziawg-go` счётчики `ip saddr 10.8.0.0/24` в POSTROUTING иногда остаются 0 при рабочем FORWARD.
  * Сообщение `iptables-legacy tables present` у `iptables -L` — предупреждение ядра, не выбор legacy для NAT.
  */
 export function buildPanelWgNatScript(): string {
@@ -45,17 +46,22 @@ export function buildPanelWgNatScript(): string {
     "nft_masq_up() {",
     "  command -v nft >/dev/null 2>&1 || return 1",
     "  CH=$(nft_nat_chain) || return 1",
-    "  if nft -a list chain ip nat \"$CH\" 2>/dev/null | grep -F \"ip saddr $SUBNET\" | grep -q masquerade; then",
+    "  if nft -a list chain ip nat \"$CH\" 2>/dev/null | grep -F \"iifname\" | grep -F \"$IFACE\" | grep -q masquerade; then",
     "    return 0",
     "  fi",
-    "  nft add rule ip nat \"$CH\" ip saddr \"$SUBNET\" ip daddr != \"$SUBNET\" masquerade",
+    "  nft insert rule ip nat \"$CH\" position 0 iifname \"$IFACE\" ip daddr != \"$SUBNET\" masquerade",
     "}",
     "",
     "nft_masq_down() {",
     "  command -v nft >/dev/null 2>&1 || return 0",
     "  CH=$(nft_nat_chain) || return 0",
     "  while true; do",
-    "    h=$(nft -a list chain ip nat \"$CH\" 2>/dev/null | grep -F \"ip saddr $SUBNET\" | grep masquerade | sed -n 's/.*# handle \\([0-9][0-9]*\\).*/\\1/p' | head -n1)",
+    "    h=$(nft -a list chain ip nat \"$CH\" 2>/dev/null | grep masquerade | grep -F \"ip saddr $SUBNET\" | sed -n 's/.*# handle \\([0-9][0-9]*\\).*/\\1/p' | head -n1)",
+    "    case \"$h\" in ''|*[!0-9]*) break ;; esac",
+    "    nft delete rule ip nat \"$CH\" handle \"$h\" 2>/dev/null || break",
+    "  done",
+    "  while true; do",
+    "    h=$(nft -a list chain ip nat \"$CH\" 2>/dev/null | grep masquerade | grep -F \"iifname\" | grep -F \"$IFACE\" | sed -n 's/.*# handle \\([0-9][0-9]*\\).*/\\1/p' | head -n1)",
     "    case \"$h\" in ''|*[!0-9]*) break ;; esac",
     "    nft delete rule ip nat \"$CH\" handle \"$h\" 2>/dev/null || break",
     "  done",
@@ -69,18 +75,23 @@ export function buildPanelWgNatScript(): string {
     '  run_ipt -C FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null || run_ipt -I FORWARD 1 -o "$IFACE" -j ACCEPT',
     '  run_ipt -C DOCKER-USER -i "$IFACE" -j RETURN 2>/dev/null || run_ipt -I DOCKER-USER 1 -i "$IFACE" -j RETURN 2>/dev/null || true',
     '  run_ipt -C DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null || run_ipt -I DOCKER-USER 1 -o "$IFACE" -j RETURN 2>/dev/null || true',
+    "  nft_masq_down",
     "  if ! nft_masq_up; then",
-    '    echo "panel-nat: nft masquerade failed, fallback iptables (nf_tables)" >&2',
-    '    if nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then',
-    '      nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE',
-    "    fi",
+    '    echo "panel-nat: nft masquerade (iifname) skipped or failed, using iptables only" >&2',
+    "  fi",
+    '  if nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then',
+    '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
+    '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
+    '    nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -i "$IFACE" ! -o "$IFACE" -j MASQUERADE',
     "  fi",
     "  ;;",
     "down)",
     "  nft_masq_down",
     '  while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
+    '  while run_ipt -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
     "  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then",
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
+    '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
     "  fi",
     '  while run_ipt -D DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null; do :; done',
     '  while run_ipt -D DOCKER-USER -i "$IFACE" -j RETURN 2>/dev/null; do :; done',
