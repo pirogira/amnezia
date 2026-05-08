@@ -1,4 +1,4 @@
-import { execRemote, shellQuote } from "../ssh/client.js";
+import { execRemote, SAFE_CONTAINER, SAFE_IFACE, shellQuote } from "../ssh/client.js";
 import type { SshAuth } from "../ssh/client.js";
 import {
   PROVISION_AWG_CONF,
@@ -95,19 +95,69 @@ export async function stepDockerComposeUp(auth: SshAuth): Promise<StepResult> {
   return { ok: true };
 }
 
-export async function stepWaitWgShow(auth: SshAuth, container: string, iface: string): Promise<StepResult> {
+function parseWgInterfaces(stdout: string): string[] {
+  const names: string[] = [];
+  const re = /^interface:\s*(\S+)/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(stdout)) !== null) names.push(m[1]);
+  return names;
+}
+
+/** Поднялся ли интерфейс с публичным ключом (деталь = имя интерфейса для БД). */
+export async function stepWaitWgShow(auth: SshAuth, container: string, preferred: string): Promise<StepResult> {
+  if (!SAFE_CONTAINER.test(container)) throw new Error("Invalid container");
+  if (!SAFE_IFACE.test(preferred)) throw new Error("Invalid iface");
+
   await new Promise((res) => setTimeout(res, 3000));
   const maxAttempts = 45;
-  for (let i = 0; i < maxAttempts; i++) {
-    const r = await execRemote(auth, `docker exec ${shellQuote(container)} wg show ${shellQuote(iface)}`);
-    if (r.code === 0 && r.stdout.includes("public key:")) {
-      return { ok: true, detail: `wg show ${iface} готов` };
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let listOut = "";
+    for (const listExe of ["wg", "awg"] as const) {
+      const lr = await execRemote(auth, `docker exec ${shellQuote(container)} ${shellQuote(listExe)} show`);
+      if (lr.code === 0 && /interface:/m.test(lr.stdout)) {
+        listOut = lr.stdout;
+        break;
+      }
     }
-    const r2 = await execRemote(auth, `docker exec ${shellQuote(container)} awg show ${shellQuote(iface)}`);
-    if (r2.code === 0 && r2.stdout.includes("public key:")) {
-      return { ok: true, detail: `awg show ${iface} готов` };
+    const names = parseWgInterfaces(listOut);
+    const candidates: string[] = [];
+    if (names.includes(preferred)) candidates.push(preferred);
+    for (const n of names) {
+      if (/^awg\d+$/.test(n) && !candidates.includes(n)) candidates.push(n);
+    }
+    for (const n of names) {
+      if (/^wg\d+$/.test(n) && !candidates.includes(n)) candidates.push(n);
+    }
+    for (const n of names) {
+      if (!candidates.includes(n)) candidates.push(n);
+    }
+    const tryList = candidates.length > 0 ? candidates : [preferred];
+
+    for (const iface of tryList) {
+      if (!SAFE_IFACE.test(iface)) continue;
+      for (const exe of ["wg", "awg"] as const) {
+        const r = await execRemote(
+          auth,
+          `docker exec ${shellQuote(container)} ${shellQuote(exe)} show ${shellQuote(iface)}`,
+        );
+        if (r.code === 0 && r.stdout.includes("public key:")) {
+          return { ok: true, detail: iface };
+        }
+      }
     }
     await new Promise((res) => setTimeout(res, 2000));
   }
-  return { ok: false, message: `Таймаут: контейнер не поднял интерфейс ${iface} (wg/awg show).` };
+
+  const logR = await execRemote(auth, `docker logs --tail 120 ${shellQuote(container)} 2>&1`);
+  const logs = trimCmdOut(logR.stdout || logR.stderr, 2500);
+  const st = await execRemote(
+    auth,
+    `docker inspect ${shellQuote(container)} --format '{{.State.Status}} {{.State.ExitCode}} {{.State.Error}}' 2>/dev/null`,
+  );
+  const meta = trimCmdOut(st.stdout || "", 500);
+  return {
+    ok: false,
+    message: `Таймаут: WireGuard в ${container} (ждали интерфейс вроде ${preferred}). inspect: ${meta}\n--- логи ---\n${logs}`,
+  };
 }

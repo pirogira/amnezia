@@ -88,7 +88,7 @@ function auditStep(adminId: string, step: string, r: StepResult): void {
   });
 }
 
-function baseInsert(input: ProvisionFormInput, vpnSubnetCidr: string): VpnServerInsertInput {
+function baseInsert(input: ProvisionFormInput, vpnSubnetCidr: string, wgInterface: string): VpnServerInsertInput {
   return {
     name: input.name,
     sshHost: input.sshHost,
@@ -97,7 +97,7 @@ function baseInsert(input: ProvisionFormInput, vpnSubnetCidr: string): VpnServer
     sshPrivateKey: input.sshPrivateKey,
     sshPassword: input.sshPassword,
     dockerWgContainer: PROVISION_CONTAINER_NAME,
-    wgInterface: "awg0",
+    wgInterface,
     vpnSubnetCidr,
     endpointHost: input.endpointHost,
     listenPort: input.listenPort,
@@ -272,7 +272,7 @@ export async function runProvisionAmneziaAwg(
       pct: Math.round((100 * (stepIndex - 1)) / totalSteps),
     });
     try {
-      serverId = insertVpnServerRecord(adminId, baseInsert(input, cidr));
+      serverId = insertVpnServerRecord(adminId, baseInsert(input, cidr, iface));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const fail: StepResult = { ok: false, message: msg };
@@ -323,6 +323,7 @@ export async function runProvisionAmneziaAwg(
       vpnSubnetCidr: input.vpnSubnetCidr,
       listenPort: 51820,
       awgParams,
+      omitPostUp: true,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -338,6 +339,7 @@ export async function runProvisionAmneziaAwg(
 
   dr = await runStep("wait_wg", () => stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, "awg0"));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
+  const wgIfaceNew = dr.ok && dr.detail ? dr.detail : "awg0";
 
   let serverId: string;
   const saveStart = Date.now();
@@ -351,7 +353,7 @@ export async function runProvisionAmneziaAwg(
     pct: Math.round((100 * (stepIndex - 1)) / totalSteps),
   });
   try {
-    serverId = insertVpnServerRecord(adminId, baseInsert(input, input.vpnSubnetCidr));
+    serverId = insertVpnServerRecord(adminId, baseInsert(input, input.vpnSubnetCidr, wgIfaceNew));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const fail: StepResult = { ok: false, message: msg };

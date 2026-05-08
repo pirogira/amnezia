@@ -10,6 +10,7 @@ export const PROVISION_AWG_CONF = `${PROVISION_AWG_DIR}/awg0.conf`;
 export const PROVISION_CONTAINER_NAME = "amnezia-awg";
 
 export function buildProvisionComposeYaml(hostListenPort: number): string {
+  /** Как в типичных WG-образах: конфиг в /etc/wireguard → `awg-quick up awg0`. */
   return `services:
   ${PROVISION_CONTAINER_NAME}:
     image: ${AMNEZIA_WG_IMAGE}
@@ -19,13 +20,13 @@ export function buildProvisionComposeYaml(hostListenPort: number): string {
     sysctls:
       - net.ipv4.ip_forward=1
     volumes:
-      - ${PROVISION_AWG_DIR}:${PROVISION_AWG_DIR}
+      - ${PROVISION_AWG_DIR}:/etc/wireguard
     ports:
       - "${hostListenPort}:51820/udp"
     command:
       - /bin/sh
       - -c
-      - if command -v awg-quick >/dev/null 2>&1; then awg-quick up ${PROVISION_AWG_CONF}; else wg-quick up ${PROVISION_AWG_CONF}; fi
+      - "awg-quick up awg0 || wg-quick up awg0"
     restart: unless-stopped
 `;
 }
