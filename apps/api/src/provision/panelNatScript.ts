@@ -3,8 +3,8 @@ export const PANEL_WG_NAT_SCRIPT_BASENAME = "panel-nat.sh";
 
 /**
  * FORWARD / DOCKER-USER — **iptables-legacy** (как у Docker на Ubuntu).
- * SNAT — **нативный `nft`** (`iifname` туннеля) и дублирующий **iptables** по **`-i %i`**, не только по `ip saddr` подсети:
- * с userspace `amneziawg-go` счётчики `ip saddr 10.8.0.0/24` в POSTROUTING иногда остаются 0 при рабочем FORWARD.
+ * SNAT: **nft** — `iifname` туннеля (в POSTROUTING допустимо). **iptables (nf_tables)** — только **`-o WAN`**
+ * (`default dev`), без **`-i`** в POSTROUTING (`Can't use -i with POSTROUTING` в v1.8.x nft backend).
  * Сообщение `iptables-legacy tables present` у `iptables -L` — предупреждение ядра, не выбор legacy для NAT.
  */
 export function buildPanelWgNatScript(): string {
@@ -67,6 +67,10 @@ export function buildPanelWgNatScript(): string {
     "  done",
     "}",
     "",
+    "wan_dev4() {",
+    "  ip -4 route show default 2>/dev/null | awk '/^default/ { print $5; exit }'",
+    "}",
+    "",
     'case "$ACTION" in',
     "up)",
     "  sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true",
@@ -77,21 +81,35 @@ export function buildPanelWgNatScript(): string {
     '  run_ipt -C DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null || run_ipt -I DOCKER-USER 1 -o "$IFACE" -j RETURN 2>/dev/null || true',
     "  nft_masq_down",
     "  if ! nft_masq_up; then",
-    '    echo "panel-nat: nft masquerade (iifname) skipped or failed, using iptables only" >&2',
+    '    echo "panel-nat: nft masquerade (iifname) skipped or failed" >&2',
     "  fi",
+    "  WAN_DEV=$(wan_dev4)",
     '  if nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then',
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
-    '    nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -i "$IFACE" ! -o "$IFACE" -j MASQUERADE',
+    '    if [ -n "$WAN_DEV" ]; then',
+    '      while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
+    '      nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE',
+    "    else",
+    '      echo "panel-nat: no IPv4 default route dev; NAT without -o (may not match on nft)" >&2',
+    '      nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE',
+    "    fi",
     "  fi",
     "  ;;",
     "down)",
     "  nft_masq_down",
+    "  WAN_DEV=$(wan_dev4)",
     '  while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
     '  while run_ipt -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
+    '  if [ -n "$WAN_DEV" ]; then',
+    '    while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
+    "  fi",
     "  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then",
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
+    '    if [ -n "$WAN_DEV" ]; then',
+    '      while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
+    "    fi",
     "  fi",
     '  while run_ipt -D DOCKER-USER -o "$IFACE" -j RETURN 2>/dev/null; do :; done',
     '  while run_ipt -D DOCKER-USER -i "$IFACE" -j RETURN 2>/dev/null; do :; done',
