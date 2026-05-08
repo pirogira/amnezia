@@ -634,8 +634,8 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
     >
       <p className="muted" style={{ width: "100%", margin: "0 0 0.5rem", fontSize: "0.88rem" }}>
         Чистый <strong>Ubuntu 22.04 / 24.04</strong>, SSH под <strong>root</strong> (ключ или пароль). Панель установит
-        Docker, поднимет контейнер <code>amnezia-awg</code> и зарегистрирует сервер. Если контейнер уже есть — только
-        запись в панели.
+        Docker, образ <code>amneziavpn/amneziawg-go</code> (AmneziaWG 2.0), контейнер <code>amnezia-awg</code> и
+        зарегистрирует сервер. Если контейнер уже есть — только запись в панели.
       </p>
       <div className="field">
         <label>Имя</label>

@@ -2,24 +2,29 @@ import { randomInt } from "node:crypto";
 import { x25519 } from "@noble/curves/ed25519.js";
 
 /**
- * Обфускация в духе Amnezia (Jmin 40–89, S1/S2, разные H1–H4; S1+56≠S2).
- * Поля S3/S4 из AWG 2.0 в конфиг не пишем: в образе amneziavpn/amnezia-wg `wg-quick` вызывает
- * обычный `wg setconf`, он не понимает `S3`/`S4` → «Line unrecognized».
- * Десятичные uint32 для H* (не hex).
+ * Параметры обфускации AmneziaWG 2.0 для серверного .conf:
+ * — S3/S4 (cookie / transport padding), см. amneziawg-tools;
+ * — H1–H4 как непересекающиеся диапазоны `start-end` (amneziawg-go `newMagicHeader`);
+ * — Jc/Jmin/Jmax/S1/S2 в духе прежнего Legacy, совместимы с awg-quick.
  */
-const H_MAGIC_MIN = 100_000;
-const H_MAGIC_MAX_EXCLUSIVE = 2_000_000_001;
+const H_SEGMENT_LO = 80_000;
+const H_SEGMENT_HI = 2_000_000_000;
 
-function fourDistinctMagicHeaders(): [string, string, string, string] {
-  const seen = new Set<number>();
-  while (seen.size < 4) {
-    seen.add(randomInt(H_MAGIC_MIN, H_MAGIC_MAX_EXCLUSIVE));
+function fourNonOverlappingHeaderRanges(): [string, string, string, string] {
+  const span = Math.floor((H_SEGMENT_HI - H_SEGMENT_LO) / 4);
+  const out: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const segStart = H_SEGMENT_LO + i * span;
+    const segEnd = H_SEGMENT_LO + (i + 1) * span - 1;
+    const innerW = Math.min(120_000, Math.floor(span * 0.25));
+    const lo = randomInt(segStart, segEnd - innerW);
+    const hi = randomInt(lo + 5_000, lo + innerW);
+    out.push(`${lo}-${hi}`);
   }
-  const arr = [...seen];
-  return [String(arr[0]), String(arr[1]), String(arr[2]), String(arr[3])];
+  return [out[0]!, out[1]!, out[2]!, out[3]!];
 }
 
-/** Случайные параметры AmneziaWG для .conf (совместимо с `wg setconf` в Docker-образе). */
+/** Случайные параметры AmneziaWG 2.0 для .conf (awg-quick + amneziawg-go из образа провижининга). */
 export function generateAwgObfuscationParams(): Record<string, string> {
   const jc = String(randomInt(3, 7));
   const jminN = randomInt(40, 90);
@@ -31,13 +36,17 @@ export function generateAwgObfuscationParams(): Record<string, string> {
     s2N = s1N + 57 <= 150 ? s1N + 57 : s1N - 1;
     if (s2N < 15) s2N = 15;
   }
-  const [h1, h2, h3, h4] = fourDistinctMagicHeaders();
+  const s3N = randomInt(15, 151);
+  const s4N = randomInt(15, 151);
+  const [h1, h2, h3, h4] = fourNonOverlappingHeaderRanges();
   return {
     Jc: jc,
     Jmin: jmin,
     Jmax: jmax,
     S1: String(s1N),
     S2: String(s2N),
+    S3: String(s3N),
+    S4: String(s4N),
     H1: h1,
     H2: h2,
     H3: h3,

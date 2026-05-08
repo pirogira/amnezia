@@ -1,8 +1,10 @@
 /**
- * Официальный образ на Docker Hub: `amneziavpn/amnezia-wg` (тег `amnezia-awg` как репозиторий на Hub нет).
- * Пин по digest для воспроизводимости; обновляйте при смене образа.
+ * Официальный образ AmneziaWG (userspace + awg-quick): `amneziavpn/amneziawg-go` на Docker Hub.
+ * Содержит amneziawg-tools с поддержкой S3/S4 (AmneziaWG 2.0); старый `amneziavpn/amnezia-wg` без тегов 2.0 не использовать.
+ * Пин по digest индекса (multi-arch); обновляйте при смене образа: `docker buildx imagetools inspect amneziavpn/amneziawg-go:latest`.
  */
-export const AMNEZIA_WG_IMAGE = "amneziavpn/amnezia-wg@sha256:ea050861bd2012a6265817636ce7c0c15764ef955782d953cef42e05c1381250";
+export const AMNEZIA_WG_IMAGE =
+  "amneziavpn/amneziawg-go@sha256:cb91bdd8f3c8c586ae2bdf93374b58899c778756fe8b37a3c0506f9e611092f3";
 
 export const PROVISION_COMPOSE_PATH = "/opt/amnezia/docker-compose.yml";
 export const PROVISION_AWG_DIR = "/opt/amnezia/awg";

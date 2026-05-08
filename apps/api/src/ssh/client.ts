@@ -22,7 +22,7 @@ export const SAFE_HOOK_PATH = /^\/[a-zA-Z0-9/_-]+\.sh$/;
 export const SAFE_COMPOSE_PATH = /^\/[a-zA-Z0-9/_.-]+\.(ya?ml)$/;
 
 /**
- * Для awg* в образах вроде amneziavpn/amnezia-wg чаще в PATH есть `wg` (симлинк на awg), а команда `awg` отсутствует.
+ * Для awg* в образах вроде amneziavpn/amneziawg-go чаще в PATH есть `wg` (симлинк на awg), а команда `awg` отсутствует.
  * Пробуем `wg` и абсолютные пути раньше, чтобы не получать «executable file not found» при ручном docker exec.
  */
 const AWG_IFACE_EXE_PROBE = ["wg", "/usr/bin/wg", "awg", "/usr/bin/awg", "/usr/local/bin/awg"] as const;
