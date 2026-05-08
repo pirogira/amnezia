@@ -84,9 +84,9 @@ export function buildClientConf(params: {
   /** Для amneziawg подставляем MTU даже если с сервера не пришли Jc/Jmin… в дампе. */
   protocol?: "wireguard" | "amneziawg";
 }): string {
-  const dnsLine = params.security.dns
-    ? `DNS = ${params.security.dns}\n`
-    : "";
+  /** При AllowedIPs 0.0.0.0/0 без DNS ОС часто не шлёт запросы резолвингу через туннель — в браузере «не удаётся найти адрес». */
+  const dnsRaw = params.security.dns?.trim();
+  const dnsLine = `DNS = ${dnsRaw && dnsRaw.length > 0 ? dnsRaw : "1.1.1.1, 1.0.0.1"}\n`;
   const psk = params.security.presharedKey
     ? `PresharedKey = ${params.security.presharedKey}\n`
     : "";

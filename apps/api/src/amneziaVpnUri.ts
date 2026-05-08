@@ -101,12 +101,17 @@ function awgFlatFromParsed(parsed: ParsedPanelWgConf): Record<string, string> {
 function buildExportConfigText(
   parsed: ParsedPanelWgConf,
   awgFlat: Record<string, string>,
+  dns1: string,
+  dns2: string,
 ): string {
+  const d1 = dns1.trim() || "1.1.1.1";
+  const d2 = dns2.trim() || "1.0.0.1";
   const lines: string[] = ["[Interface]", `Address = ${parsed.address}`];
   if (parsed.mtu !== undefined && parsed.mtu.length > 0) {
     lines.push(`MTU = ${parsed.mtu}`);
   }
-  lines.push("DNS = $PRIMARY_DNS, $SECONDARY_DNS", `PrivateKey = ${parsed.privateKey}`);
+  /** Реальные IP: плейсхолдеры `$PRIMARY_DNS` в `inner.config` часто не подставляются клиентом → «не удаётся найти адрес». */
+  lines.push(`DNS = ${d1}, ${d2}`, `PrivateKey = ${parsed.privateKey}`);
   for (const k of AWG_CONF_LINE_ORDER) {
     const v = awgFlat[k] ?? "";
     /** Пустые `S3 = ` / `I1 = ` ломают разбор в Amnezia; на сервере в .conf таких строк нет (formatAwgInterfaceLines). */
@@ -136,7 +141,7 @@ export function buildAmneziaAwgVpnRoot(input: AmneziaAwgVpnRootInput): Record<st
   const parsed = parseWireGuardConfFromPanel(input.clientConfPlain);
   const awgFlat = awgFlatFromParsed(parsed);
   const addrHost = parsed.address.replace(/\/\d+$/, "");
-  const configStr = buildExportConfigText(parsed, awgFlat);
+  const configStr = buildExportConfigText(parsed, awgFlat, input.dns1, input.dns2);
   const port = input.listenPort;
   const inner: Record<string, unknown> = {};
   for (const k of AWG_JSON_PARAM_ORDER) {
