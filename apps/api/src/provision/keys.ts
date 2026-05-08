@@ -3,25 +3,19 @@ import { x25519 } from "@noble/curves/ed25519.js";
 
 /**
  * Параметры обфускации AmneziaWG 2.0 для серверного .conf:
- * — S3/S4 (cookie / transport padding), см. amneziawg-tools;
- * — H1–H4 как непересекающиеся диапазоны `start-end` (amneziawg-go `newMagicHeader`);
- * — Jc/Jmin/Jmax/S1/S2 в духе прежнего Legacy, совместимы с awg-quick.
+ * — S3/S4 (cookie / transport padding);
+ * — H1–H4 — разные десятичные uint32 (как раньше); при необходимости диапазоны `a-b` поддерживает amneziawg-go.
  */
-const H_SEGMENT_LO = 80_000;
-const H_SEGMENT_HI = 2_000_000_000;
+const H_MAGIC_MIN = 100_000;
+const H_MAGIC_MAX_EXCLUSIVE = 2_000_000_001;
 
-function fourNonOverlappingHeaderRanges(): [string, string, string, string] {
-  const span = Math.floor((H_SEGMENT_HI - H_SEGMENT_LO) / 4);
-  const out: string[] = [];
-  for (let i = 0; i < 4; i++) {
-    const segStart = H_SEGMENT_LO + i * span;
-    const segEnd = H_SEGMENT_LO + (i + 1) * span - 1;
-    const innerW = Math.min(120_000, Math.floor(span * 0.25));
-    const lo = randomInt(segStart, segEnd - innerW);
-    const hi = randomInt(lo + 5_000, lo + innerW);
-    out.push(`${lo}-${hi}`);
+function fourDistinctMagicHeaders(): [string, string, string, string] {
+  const seen = new Set<number>();
+  while (seen.size < 4) {
+    seen.add(randomInt(H_MAGIC_MIN, H_MAGIC_MAX_EXCLUSIVE));
   }
-  return [out[0]!, out[1]!, out[2]!, out[3]!];
+  const arr = [...seen];
+  return [String(arr[0]), String(arr[1]), String(arr[2]), String(arr[3])];
 }
 
 /** Случайные параметры AmneziaWG 2.0 для .conf (awg-quick + amneziawg-go из образа провижининга). */
@@ -38,7 +32,7 @@ export function generateAwgObfuscationParams(): Record<string, string> {
   }
   const s3N = randomInt(15, 151);
   const s4N = randomInt(15, 151);
-  const [h1, h2, h3, h4] = fourNonOverlappingHeaderRanges();
+  const [h1, h2, h3, h4] = fourDistinctMagicHeaders();
   return {
     Jc: jc,
     Jmin: jmin,

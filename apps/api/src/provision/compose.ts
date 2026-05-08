@@ -25,6 +25,8 @@ export function buildProvisionComposeYaml(): string {
    * `privileged: true` — иначе на Ubuntu Docker часто `Permission denied` на `/proc/1/ns/mnt`
    * (AppArmor/политика), даже при CAP_SYS_ADMIN.
    */
+  /** awg-quick из amneziawg-tools: короткое имя `awg0` → `/etc/amnezia/amneziawg/awg0.conf`, у нас конфиг в `/etc/wireguard`. */
+  const awgConfInContainer = "/etc/wireguard/awg0.conf";
   return `services:
   ${PROVISION_CONTAINER_NAME}:
     image: ${AMNEZIA_WG_IMAGE}
@@ -32,6 +34,8 @@ export function buildProvisionComposeYaml(): string {
     network_mode: host
     pid: host
     privileged: true
+    environment:
+      WG_QUICK_USERSPACE_IMPLEMENTATION: /usr/bin/amneziawg-go
     devices:
       - /dev/net/tun
     volumes:
@@ -39,7 +43,7 @@ export function buildProvisionComposeYaml(): string {
     command:
       - /bin/sh
       - -c
-      - "trap 'wg-quick down awg0 2>/dev/null; awg-quick down awg0 2>/dev/null; exit 0' TERM INT; if command -v awg-quick >/dev/null 2>&1; then awg-quick up awg0; else wg-quick up awg0; fi; tail -f /dev/null"
+      - "trap 'wg-quick down ${awgConfInContainer} 2>/dev/null; awg-quick down ${awgConfInContainer} 2>/dev/null; exit 0' TERM INT; if command -v awg-quick >/dev/null 2>&1; then awg-quick up ${awgConfInContainer}; else wg-quick up ${awgConfInContainer}; fi; tail -f /dev/null"
     restart: unless-stopped
 `;
 }
