@@ -340,7 +340,7 @@ export async function runProvisionAmneziaAwg(
     awg0Conf = buildAwg0ServerConf({
       serverPrivateKey: privateKey,
       vpnSubnetCidr: input.vpnSubnetCidr,
-      listenPort: 51820,
+      listenPort: input.listenPort,
       awgParams,
       omitPostUp: false,
     });
@@ -348,7 +348,7 @@ export async function runProvisionAmneziaAwg(
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, steps, message: msg };
   }
-  const composeYaml = buildProvisionComposeYaml(input.listenPort);
+  const composeYaml = buildProvisionComposeYaml();
 
   dr = await runStep("write_files", () => stepWriteProvisionFiles(auth, composeYaml, awg0Conf));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
