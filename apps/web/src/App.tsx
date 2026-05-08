@@ -225,6 +225,7 @@ export function App() {
         <div className="card">
           <h2 className="h2">Клиенты · {activeServer.name}</h2>
           <ClientForm
+            key={activeServer.id}
             server={activeServer}
             onCreated={async (conf, vpnUri) => {
               setLastConf(conf);
@@ -1016,7 +1017,6 @@ function ClientForm(props: {
 }) {
   const [name, setName] = useState("user1");
   const [protocol, setProtocol] = useState<VpnProtocol>("amneziawg");
-  const [listenPort, setListenPort] = useState(props.server.listenPort);
   const [dns, setDns] = useState("1.1.1.1");
   const [junkCount, setJunkCount] = useState<number | "">("");
   const [routeIpv6, setRouteIpv6] = useState(false);
@@ -1045,7 +1045,7 @@ function ClientForm(props: {
               json: {
                 name,
                 protocol,
-                listenPort,
+                listenPort: props.server.listenPort,
                 security,
                 expiresAt: expires || null,
               },
@@ -1088,14 +1088,10 @@ function ClientForm(props: {
           В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code>. По умолчанию только IPv4 (<code>0.0.0.0/0</code>) и MTU 1280. Подсеть клиента берётся с интерфейса в Docker (<code>ip addr</code>), если в карточке сервера CIDR другой — иначе часто «VPN подключён, интернета нет». После создания — <code>vpn://…</code>.
         </p>
       )}
-      <div className="field">
-        <label>Порт в конфиге</label>
-        <input
-          type="number"
-          value={listenPort}
-          onChange={(e) => setListenPort(Number(e.target.value))}
-        />
-      </div>
+      <p className="muted" style={{ width: "100%", margin: 0, fontSize: "0.88rem" }}>
+        UDP-порт в конфиге и в <code>vpn://</code>: <strong>{props.server.listenPort}</strong> — как в карточке сервера
+        (публикация Docker). Сменить порт — в блоке «Порт и префлайт» у этого сервера.
+      </p>
       {protocol !== "vless" && (
         <>
           <div className="field">
