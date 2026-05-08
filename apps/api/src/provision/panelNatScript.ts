@@ -63,6 +63,7 @@ export function buildPanelWgNatScript(): string {
     "",
     'case "$ACTION" in',
     "up)",
+    "  sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true",
     '  sysctl -w "net.ipv4.conf.$IFACE.rp_filter=0" 2>/dev/null || true',
     '  run_ipt -C FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null || run_ipt -I FORWARD 1 -i "$IFACE" -j ACCEPT',
     '  run_ipt -C FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null || run_ipt -I FORWARD 1 -o "$IFACE" -j ACCEPT',

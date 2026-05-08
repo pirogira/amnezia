@@ -143,10 +143,10 @@ export function buildAmneziaAwgVpnRoot(input: AmneziaAwgVpnRootInput): Record<st
   const addrHost = parsed.address.replace(/\/\d+$/, "");
   const configStr = buildExportConfigText(parsed, awgFlat, input.dns1, input.dns2);
   const port = input.listenPort;
+  /** Как в экспорте приложения Amnezia: все ключи H1…S4 в объекте и в `last_config`, пустые — `""`. Иначе часть сборок помечает профиль как «старый» / не AWG 2. */
   const inner: Record<string, unknown> = {};
   for (const k of AWG_JSON_PARAM_ORDER) {
-    const v = awgFlat[k] ?? "";
-    if (v.length > 0) inner[k] = v;
+    inner[k] = awgFlat[k] ?? "";
   }
   const allowedIpList = parsed.allowedIps
     .split(",")
@@ -164,14 +164,13 @@ export function buildAmneziaAwgVpnRoot(input: AmneziaAwgVpnRootInput): Record<st
   inner.port = port;
   inner.psk_key = parsed.presharedKey;
   inner.server_pub_key = parsed.peerPublicKey;
-  /** Часть сборок Amnezia читает версию протокола из last_config, а не только из awg.protocol_version. */
+  /** После полей как у официального экспорта — часть клиентов читает версию только из `last_config`. */
   inner.protocol_version = "2";
   inner.transport_proto = "udp";
   const lastConfig = JSON.stringify(inner, null, 4);
   const awgTop: Record<string, unknown> = {};
   for (const k of AWG_JSON_PARAM_ORDER) {
-    const v = awgFlat[k] ?? "";
-    if (v.length > 0) awgTop[k] = v;
+    awgTop[k] = awgFlat[k] ?? "";
   }
   awgTop.last_config = lastConfig;
   awgTop.port = String(port);
