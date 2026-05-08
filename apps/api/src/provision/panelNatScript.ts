@@ -2,10 +2,10 @@
 export const PANEL_WG_NAT_SCRIPT_BASENAME = "panel-nat.sh";
 
 /**
- * FORWARD / DOCKER-USER — **iptables-legacy** (как у Docker на Ubuntu).
- * SNAT: **nft** — `iifname` туннеля (в POSTROUTING допустимо). **iptables (nf_tables)** — только **`-o WAN`**
- * (`default dev`), без **`-i`** в POSTROUTING (`Can't use -i with POSTROUTING` в v1.8.x nft backend).
- * Сообщение `iptables-legacy tables present` у `iptables -L` — предупреждение ядра, не выбор legacy для NAT.
+ * FORWARD / DOCKER-USER и **MASQUERADE** — один путь **`iptables-legacy`** через `nsenter` (как у Docker на Ubuntu).
+ * Иначе при «iptables-legacy tables present» SNAT остаётся в **nf_tables** (`iptables -t nat`), а форвард — в **legacy**:
+ * правила в `iptables -L` показывают **0 pkts**, интернета у VPN нет.
+ * Дополнительно **nft**: `iifname` туннеля в `ip nat` postrouting (если есть `nft`).
  */
 export function buildPanelWgNatScript(): string {
   return [
@@ -84,15 +84,20 @@ export function buildPanelWgNatScript(): string {
     '    echo "panel-nat: nft masquerade (iifname) skipped or failed" >&2',
     "  fi",
     "  WAN_DEV=$(wan_dev4)",
-    '  if nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then',
+    '  while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
+    '  while run_ipt -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
+    '  if [ -n "$WAN_DEV" ]; then',
+    '    while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
+    '    run_ipt -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null || run_ipt -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE',
+    "  else",
+    '    echo "panel-nat: no IPv4 default route dev; NAT without -o" >&2',
+    '    run_ipt -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || run_ipt -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE',
+    "  fi",
+    '  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then',
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
     '    if [ -n "$WAN_DEV" ]; then',
     '      while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
-    '      nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE',
-    "    else",
-    '      echo "panel-nat: no IPv4 default route dev; NAT without -o (may not match on nft)" >&2',
-    '      nsenter -t 1 -m -- /usr/sbin/iptables -t nat -C POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null || nsenter -t 1 -m -- /usr/sbin/iptables -t nat -I POSTROUTING 1 -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE',
     "    fi",
     "  fi",
     "  ;;",
@@ -104,7 +109,7 @@ export function buildPanelWgNatScript(): string {
     '  if [ -n "$WAN_DEV" ]; then',
     '    while run_ipt -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -o "$WAN_DEV" -j MASQUERADE 2>/dev/null; do :; done',
     "  fi",
-    "  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then",
+    '  if command -v nsenter >/dev/null 2>&1 && nsenter -t 1 -m test -x /usr/sbin/iptables 2>/dev/null; then',
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -s "$SUBNET" ! -d "$SUBNET" -j MASQUERADE 2>/dev/null; do :; done',
     '    while nsenter -t 1 -m -- /usr/sbin/iptables -t nat -D POSTROUTING -i "$IFACE" ! -o "$IFACE" -j MASQUERADE 2>/dev/null; do :; done',
     '    if [ -n "$WAN_DEV" ]; then',
