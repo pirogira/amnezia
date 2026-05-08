@@ -270,36 +270,8 @@ export function App() {
                   setClients(list);
                 }}
               />
-              {lastConf && (
-                <div style={{ marginTop: "1rem" }}>
-                  <p className="muted">Последний созданный конфиг (.conf)</p>
-                  <div className="qr">
-                    <QRCodeSVG value={lastConf} size={180} />
-                  </div>
-                  <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>{lastConf}</pre>
-                  {lastVpnUri && (
-                    <div style={{ marginTop: "1rem" }}>
-                      <p className="muted">Импорт в приложение Amnezia (ссылка vpn://)</p>
-                      <div className="qr">
-                        <QRCodeSVG value={lastVpnUri} size={180} />
-                      </div>
-                      <textarea
-                        readOnly
-                        rows={4}
-                        value={lastVpnUri}
-                        style={{ width: "100%", fontFamily: "monospace", fontSize: "0.7rem" }}
-                      />
-                      <button
-                        className="btn"
-                        type="button"
-                        style={{ marginTop: "0.35rem" }}
-                        onClick={() => void navigator.clipboard.writeText(lastVpnUri)}
-                      >
-                        Копировать vpn://
-                      </button>
-                    </div>
-                  )}
-                </div>
+              {(lastVpnUri || lastConf) && (
+                <LastIssuedBlock vpnUri={lastVpnUri} conf={lastConf} />
               )}
               <table className="table" style={{ marginTop: "1rem" }}>
                 <thead>
@@ -889,6 +861,60 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
       )}
     </form>
   );
+}
+
+function LastIssuedBlock(props: { vpnUri: string | null; conf: string | null }) {
+  const { vpnUri, conf } = props;
+  if (vpnUri) {
+    return (
+      <div className="issued-vpn-block">
+        <div className="issued-vpn-header">
+          <span className="vpn-uri-badge">vpn://</span>
+          <span className="vpn-uri-caption">импорт в приложение Amnezia</span>
+        </div>
+        <div className="vpn-uri-shell">
+          <textarea
+            readOnly
+            className="vpn-uri-field"
+            value={vpnUri}
+            rows={7}
+            spellCheck={false}
+            aria-label="Ссылка vpn:// для импорта"
+          />
+        </div>
+        <div className="vpn-uri-footer">
+          <button type="button" className="btn primary" onClick={() => void navigator.clipboard.writeText(vpnUri)}>
+            Копировать ссылку
+          </button>
+          <div className="vpn-uri-qr-wrap" aria-hidden>
+            <QRCodeSVG value={vpnUri} size={128} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (conf) {
+    return (
+      <div className="issued-vpn-block issued-conf-fallback">
+        <p className="muted" style={{ margin: "0 0 0.65rem", fontSize: "0.88rem" }}>
+          Для этого протокола ссылка <code className="vpn-inline-code">vpn://</code> недоступна — ниже текст{" "}
+          <code className="vpn-inline-code">.conf</code> или скачайте файл из таблицы.
+        </p>
+        <div className="vpn-uri-shell">
+          <pre className="vpn-uri-field vpn-uri-field--conf">{conf}</pre>
+        </div>
+        <button
+          type="button"
+          className="btn primary"
+          style={{ marginTop: "0.85rem" }}
+          onClick={() => void navigator.clipboard.writeText(conf)}
+        >
+          Копировать .conf
+        </button>
+      </div>
+    );
+  }
+  return null;
 }
 
 function ClientForm(props: {
