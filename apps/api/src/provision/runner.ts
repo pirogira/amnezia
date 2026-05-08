@@ -1,3 +1,4 @@
+import type { FastifyBaseLogger } from "fastify";
 import { writeAudit } from "../audit.js";
 import { insertVpnServerRecord, type VpnServerInsertInput } from "../services/vpnServerInsert.js";
 import {
@@ -36,7 +37,30 @@ export type ProvisionFormInput = {
   vlessReality?: VpnServerInsertInput["vlessReality"];
 };
 
-export type ProvisionLogStep = { step: string; ok: boolean; message?: string };
+const STEP_LABELS: Record<string, string> = {
+  detect_os: "Проверка ОС (Ubuntu 22.04 / 24.04)",
+  probe_container: "Проверка контейнера amnezia-awg",
+  ensure_docker: "Установка Docker (при необходимости)",
+  ip_forward: "Включение IPv4 forwarding",
+  write_files: "Запись awg0.conf и docker-compose",
+  compose_up: "docker compose up",
+  wait_wg: "Ожидание интерфейса WireGuard",
+  resolve_iface: "Определение интерфейса",
+  save_server: "Сохранение сервера в панели",
+};
+
+export type ProvisionLogStep = {
+  step: string;
+  label?: string;
+  ok: boolean;
+  message?: string;
+  durationMs?: number;
+};
+
+export type ProvisionRunnerOptions = {
+  onProgress?: (line: Record<string, unknown>) => void;
+  log?: FastifyBaseLogger;
+};
 
 function buildSshAuthForProvision(input: ProvisionFormInput): SshAuth {
   const pwd = input.sshPassword.trim();
@@ -85,24 +109,69 @@ function baseInsert(input: ProvisionFormInput, vpnSubnetCidr: string): VpnServer
   };
 }
 
+function stepMessage(r: StepResult): string | undefined {
+  if (!r.ok && "message" in r) return r.message;
+  if (r.ok && "detail" in r && r.detail) return r.detail;
+  return undefined;
+}
+
 export async function runProvisionAmneziaAwg(
   adminId: string,
   input: ProvisionFormInput,
+  opts?: ProvisionRunnerOptions,
 ): Promise<
   { ok: true; serverId: string; steps: ProvisionLogStep[] } | { ok: false; steps: ProvisionLogStep[]; message: string }
 > {
   const steps: ProvisionLogStep[] = [];
   const auth = buildSshAuthForProvision(input);
+  const emit = opts?.onProgress;
+  const log = opts?.log;
 
-  const push = (step: string, r: StepResult) => {
+  let totalSteps = 7;
+  let stepIndex = 0;
+
+  const push = (step: string, r: StepResult, durationMs?: number) => {
+    const label = STEP_LABELS[step] ?? step;
     steps.push({
       step,
+      label,
       ok: r.ok,
       ...("message" in r && !r.ok ? { message: r.message } : {}),
       ...("detail" in r && r.ok && r.detail ? { message: r.detail } : {}),
+      ...(durationMs !== undefined ? { durationMs } : {}),
     });
     auditStep(adminId, step, r);
+    log?.info({ provision: step, ok: r.ok, durationMs, sshHost: input.sshHost }, "provision_step");
   };
+
+  async function runStep(stepKey: string, fn: () => Promise<StepResult>): Promise<StepResult> {
+    const label = STEP_LABELS[stepKey] ?? stepKey;
+    stepIndex += 1;
+    emit?.({
+      event: "step_start",
+      step: stepKey,
+      label,
+      index: stepIndex,
+      total: totalSteps,
+      pct: Math.round((100 * (stepIndex - 1)) / totalSteps),
+    });
+    const t0 = Date.now();
+    const r = await fn();
+    const durationMs = Date.now() - t0;
+    push(stepKey, r, durationMs);
+    emit?.({
+      event: "step_end",
+      step: stepKey,
+      label,
+      index: stepIndex,
+      total: totalSteps,
+      ok: r.ok,
+      durationMs,
+      message: stepMessage(r),
+      pct: Math.round((100 * stepIndex) / totalSteps),
+    });
+    return r;
+  }
 
   writeAudit(adminId, "server_provision_start", {
     name: input.name,
@@ -110,68 +179,210 @@ export async function runProvisionAmneziaAwg(
     sshPort: input.sshPort,
     sshUser: input.sshUser,
   });
+  log?.info({ sshHost: input.sshHost, name: input.name }, "provision_start");
 
+  const tDetect = Date.now();
+  emit?.({
+    event: "step_start",
+    step: "detect_os",
+    label: STEP_LABELS.detect_os,
+    index: 1,
+    total: 7,
+    pct: 0,
+  });
   let dr = await stepDetectUbuntu(auth);
-  push("detect_os", dr);
-  if (!dr.ok) return { ok: false, steps, message: dr.message };
+  const detectMs = Date.now() - tDetect;
+  push("detect_os", dr, detectMs);
+  log?.info({ provision: "detect_os", ok: dr.ok, durationMs: detectMs }, "provision_step");
+  if (!dr.ok) {
+    emit?.({
+      event: "step_end",
+      step: "detect_os",
+      label: STEP_LABELS.detect_os,
+      index: 1,
+      total: 7,
+      ok: false,
+      durationMs: detectMs,
+      message: dr.message,
+      pct: 0,
+    });
+    return { ok: false, steps, message: dr.message };
+  }
 
   const exists = await dockerContainerExists(auth, PROVISION_CONTAINER_NAME);
+  totalSteps = exists ? 5 : 7;
+  emit?.({
+    event: "plan",
+    totalSteps,
+    reusedContainer: exists,
+    message: exists
+      ? "Контейнер уже есть — короткий сценарий."
+      : "Полная установка Docker и контейнера.",
+  });
+  log?.info({ totalSteps, reusedContainer: exists }, "provision_plan");
+  emit?.({
+    event: "step_end",
+    step: "detect_os",
+    label: STEP_LABELS.detect_os,
+    index: 1,
+    total: totalSteps,
+    ok: true,
+    durationMs: detectMs,
+    message: stepMessage(dr),
+    pct: Math.round(100 / totalSteps),
+  });
+
+  stepIndex = 1;
+
   if (exists) {
-    push("container_exists", { ok: true, detail: "Контейнер amnezia-awg уже есть — установка пропущена" });
-    let iface = "awg0";
-    try {
-      iface = await dockerResolveWgIface(auth, PROVISION_CONTAINER_NAME, "awg0");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const fail: StepResult = { ok: false, message: msg };
-      push("resolve_iface", fail);
-      return { ok: false, steps, message: msg };
-    }
-    push("resolve_iface", { ok: true, detail: iface });
+    dr = await runStep("probe_container", async () => ({
+      ok: true,
+      detail: "Используется существующий amnezia-awg",
+    }));
+
+    dr = await runStep("resolve_iface", async () => {
+      try {
+        const iface = await dockerResolveWgIface(auth, PROVISION_CONTAINER_NAME, "awg0");
+        return { ok: true, detail: iface };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { ok: false, message: msg };
+      }
+    });
+    if (!dr.ok) return { ok: false, steps, message: dr.message };
+
+    const ifaceRow = steps.find((s) => s.step === "resolve_iface");
+    const iface = ifaceRow?.message ?? "awg0";
+
+    dr = await runStep("wait_wg", () => stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, iface));
+    if (!dr.ok) return { ok: false, steps, message: dr.message };
 
     const prefix = await dockerDetectIfaceSlash24Prefix(auth, PROVISION_CONTAINER_NAME, iface);
     const cidr = prefix ? `${prefix}.0/24` : input.vpnSubnetCidr;
 
-    const wait = await stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, iface);
-    push("wait_wg", wait);
-    if (!wait.ok) return { ok: false, steps, message: wait.message };
+    let serverId: string;
+    const saveStart = Date.now();
+    stepIndex += 1;
+    emit?.({
+      event: "step_start",
+      step: "save_server",
+      label: STEP_LABELS.save_server,
+      index: stepIndex,
+      total: totalSteps,
+      pct: Math.round((100 * (stepIndex - 1)) / totalSteps),
+    });
+    try {
+      serverId = insertVpnServerRecord(adminId, baseInsert(input, cidr));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const fail: StepResult = { ok: false, message: msg };
+      push("save_server", fail, Date.now() - saveStart);
+      emit?.({
+        event: "step_end",
+        step: "save_server",
+        label: STEP_LABELS.save_server,
+        index: stepIndex,
+        total: totalSteps,
+        ok: false,
+        durationMs: Date.now() - saveStart,
+        message: msg,
+        pct: Math.round((100 * stepIndex) / totalSteps),
+      });
+      return { ok: false, steps, message: msg };
+    }
+    push("save_server", { ok: true, detail: serverId }, Date.now() - saveStart);
+    emit?.({
+      event: "step_end",
+      step: "save_server",
+      label: STEP_LABELS.save_server,
+      index: stepIndex,
+      total: totalSteps,
+      ok: true,
+      durationMs: Date.now() - saveStart,
+      message: serverId,
+      pct: 100,
+    });
 
-    const serverId = insertVpnServerRecord(adminId, baseInsert(input, cidr));
     writeAudit(adminId, "server_provision_done", { serverId, reusedContainer: true });
+    log?.info({ serverId, reusedContainer: true }, "provision_done");
     return { ok: true, serverId, steps };
   }
 
-  dr = await stepEnsureDocker(auth);
-  push("ensure_docker", dr);
+  dr = await runStep("ensure_docker", () => stepEnsureDocker(auth));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
 
-  dr = await stepEnableIpv4Forward(auth);
-  push("ip_forward", dr);
+  dr = await runStep("ip_forward", () => stepEnableIpv4Forward(auth));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
 
   const { privateKey } = generateWgServerKeypair();
   const awgParams = generateAwgObfuscationParams();
-  const awg0Conf = buildAwg0ServerConf({
-    serverPrivateKey: privateKey,
-    vpnSubnetCidr: input.vpnSubnetCidr,
-    listenPort: 51820,
-    awgParams,
-  });
+  let awg0Conf: string;
+  try {
+    awg0Conf = buildAwg0ServerConf({
+      serverPrivateKey: privateKey,
+      vpnSubnetCidr: input.vpnSubnetCidr,
+      listenPort: 51820,
+      awgParams,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, steps, message: msg };
+  }
   const composeYaml = buildProvisionComposeYaml(input.listenPort);
 
-  dr = await stepWriteProvisionFiles(auth, composeYaml, awg0Conf);
-  push("write_files", dr);
+  dr = await runStep("write_files", () => stepWriteProvisionFiles(auth, composeYaml, awg0Conf));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
 
-  dr = await stepDockerComposeUp(auth);
-  push("compose_up", dr);
+  dr = await runStep("compose_up", () => stepDockerComposeUp(auth));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
 
-  const wait = await stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, "awg0");
-  push("wait_wg", wait);
-  if (!wait.ok) return { ok: false, steps, message: wait.message };
+  dr = await runStep("wait_wg", () => stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, "awg0"));
+  if (!dr.ok) return { ok: false, steps, message: dr.message };
 
-  const serverId = insertVpnServerRecord(adminId, baseInsert(input, input.vpnSubnetCidr));
+  let serverId: string;
+  const saveStart = Date.now();
+  stepIndex += 1;
+  emit?.({
+    event: "step_start",
+    step: "save_server",
+    label: STEP_LABELS.save_server,
+    index: stepIndex,
+    total: totalSteps,
+    pct: Math.round((100 * (stepIndex - 1)) / totalSteps),
+  });
+  try {
+    serverId = insertVpnServerRecord(adminId, baseInsert(input, input.vpnSubnetCidr));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const fail: StepResult = { ok: false, message: msg };
+    push("save_server", fail, Date.now() - saveStart);
+    emit?.({
+      event: "step_end",
+      step: "save_server",
+      label: STEP_LABELS.save_server,
+      index: stepIndex,
+      total: totalSteps,
+      ok: false,
+      durationMs: Date.now() - saveStart,
+      message: msg,
+      pct: Math.round((100 * stepIndex) / totalSteps),
+    });
+    return { ok: false, steps, message: msg };
+  }
+  push("save_server", { ok: true, detail: serverId }, Date.now() - saveStart);
+  emit?.({
+    event: "step_end",
+    step: "save_server",
+    label: STEP_LABELS.save_server,
+    index: stepIndex,
+    total: totalSteps,
+    ok: true,
+    durationMs: Date.now() - saveStart,
+    message: serverId,
+    pct: 100,
+  });
+
   writeAudit(adminId, "server_provision_done", { serverId, reusedContainer: false });
+  log?.info({ serverId, reusedContainer: false }, "provision_done");
   return { ok: true, serverId, steps };
 }

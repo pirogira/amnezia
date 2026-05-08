@@ -132,7 +132,8 @@ export function parseSubnetLastOctets(cidr: string): { prefix: string; maxHost: 
   return { prefix: m[1], maxHost: 254 };
 }
 
+/** Октет хоста в /24: 1 — шлюз VPN (сервер), 2–254 — клиенты и прочие хосты. */
 export function hostIpFromOctet(prefix: string, octet: number): string {
-  if (octet < 2 || octet > 254) throw new Error("octet out of range");
+  if (octet < 1 || octet > 254) throw new Error("octet out of range");
   return `${prefix}.${octet}`;
 }

@@ -1,3 +1,4 @@
+import { PassThrough } from "node:stream";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { getDb } from "../db.js";
@@ -133,7 +134,7 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
     const b = parsed.data;
     const endpointHost = (b.endpointHost?.trim() || b.sshHost).trim();
-    const result = await runProvisionAmneziaAwg(sub, {
+    const payload = {
       name: b.name,
       sshHost: b.sshHost,
       sshPort: b.sshPort,
@@ -144,7 +145,41 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
       listenPort: b.listenPort,
       vpnSubnetCidr: b.vpnSubnetCidr,
       vlessReality: b.vlessReality,
-    });
+    };
+
+    const q = req.query as { stream?: string };
+    const wantStream = q.stream === "1" || q.stream === "true";
+
+    if (wantStream) {
+      const stream = new PassThrough();
+      reply.header("Content-Type", "application/x-ndjson; charset=utf-8");
+      reply.header("Cache-Control", "no-cache");
+      reply.header("X-Accel-Buffering", "no");
+      void (async () => {
+        const write = (o: Record<string, unknown>) => {
+          stream.write(`${JSON.stringify(o)}\n`);
+        };
+        try {
+          const result = await runProvisionAmneziaAwg(sub, payload, {
+            onProgress: write,
+            log: req.log,
+          });
+          if (result.ok) {
+            write({ event: "result", ok: true, serverId: result.serverId, steps: result.steps });
+          } else {
+            write({ event: "result", ok: false, message: result.message, steps: result.steps });
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          stream.write(`${JSON.stringify({ event: "result", ok: false, message: msg, steps: [] })}\n`);
+        } finally {
+          stream.end();
+        }
+      })();
+      return reply.send(stream);
+    }
+
+    const result = await runProvisionAmneziaAwg(sub, payload, { log: req.log });
     if (!result.ok) {
       return reply.code(502).send({
         error: "provision_failed",

@@ -484,7 +484,13 @@ function LoginForm(props: {
   );
 }
 
-type ProvisionStep = { step: string; ok: boolean; message?: string };
+type ProvisionStep = {
+  step: string;
+  ok: boolean;
+  message?: string;
+  label?: string;
+  durationMs?: number;
+};
 
 function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
   const [name, setName] = useState("New VPS");
@@ -499,6 +505,8 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [steps, setSteps] = useState<ProvisionStep[]>([]);
   const [busy, setBusy] = useState(false);
+  const [progressPct, setProgressPct] = useState(0);
+  const [progressLabel, setProgressLabel] = useState("");
 
   return (
     <form
@@ -507,6 +515,8 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
         e.preventDefault();
         setMsg(null);
         setSteps([]);
+        setProgressPct(0);
+        setProgressLabel("Подключение к API…");
         let vlessReality: VlessReality | undefined;
         if (vlessJson.trim()) {
           try {
@@ -517,48 +527,99 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
           }
         }
         const tok = getToken();
+        const body = JSON.stringify({
+          name,
+          sshHost,
+          sshPort,
+          sshUser: "root",
+          sshPrivateKey: sshKey,
+          sshPassword,
+          endpointHost: endpoint.trim() || undefined,
+          listenPort,
+          vpnSubnetCidr: cidr,
+          vlessReality,
+        });
         setBusy(true);
         try {
-          const res = await fetch("/api/servers/provision", {
+          const res = await fetch("/api/servers/provision?stream=1", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
             },
-            body: JSON.stringify({
-              name,
-              sshHost,
-              sshPort,
-              sshUser: "root",
-              sshPrivateKey: sshKey,
-              sshPassword,
-              endpointHost: endpoint.trim() || undefined,
-              listenPort,
-              vpnSubnetCidr: cidr,
-              vlessReality,
-            }),
+            body,
           });
-          const j = (await res.json().catch(() => ({}))) as {
-            id?: string;
-            steps?: ProvisionStep[];
-            message?: string;
-            error?: string;
-            details?: unknown;
-          };
+          const ct = res.headers.get("content-type") ?? "";
           if (!res.ok) {
+            const j = (await res.json().catch(() => ({}))) as {
+              message?: string;
+              error?: string;
+              details?: unknown;
+            };
             const detail =
-              j.details && typeof j.details === "object"
-                ? JSON.stringify(j.details)
-                : "";
+              j.details && typeof j.details === "object" ? JSON.stringify(j.details) : "";
             setMsg([j.message || j.error || `HTTP ${res.status}`, detail].filter(Boolean).join(" — "));
-            if (Array.isArray(j.steps)) setSteps(j.steps);
+            setProgressLabel("");
             return;
           }
-          if (Array.isArray(j.steps)) setSteps(j.steps);
-          setMsg(j.id ? `Сервер добавлен (id: ${j.id})` : "Сервер добавлен");
-          await props.onCreated();
+          if (!res.body || !ct.includes("ndjson")) {
+            setMsg("Ожидался поток NDJSON от API (stream=1).");
+            setProgressLabel("");
+            return;
+          }
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let buf = "";
+          let finalSteps: ProvisionStep[] = [];
+          let finalOk = false;
+          let finalId: string | undefined;
+          let finalErr: string | undefined;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const parts = buf.split("\n");
+            buf = parts.pop() ?? "";
+            for (const line of parts) {
+              const t = line.trim();
+              if (!t) continue;
+              let ev: Record<string, unknown>;
+              try {
+                ev = JSON.parse(t) as Record<string, unknown>;
+              } catch {
+                continue;
+              }
+              const evName = String(ev.event ?? "");
+              if (evName === "plan" && typeof ev.message === "string") {
+                setProgressLabel(ev.message as string);
+              }
+              if (evName === "step_start" && typeof ev.label === "string") {
+                setProgressLabel(String(ev.label));
+              }
+              if (evName === "step_end" && typeof ev.pct === "number") {
+                setProgressPct(Math.min(100, Math.max(0, Number(ev.pct))));
+              }
+              if (evName === "result") {
+                finalOk = Boolean(ev.ok);
+                if (Array.isArray(ev.steps)) finalSteps = ev.steps as ProvisionStep[];
+                if (finalOk && typeof ev.serverId === "string") finalId = ev.serverId;
+                if (!finalOk && typeof ev.message === "string") finalErr = ev.message;
+              }
+            }
+          }
+          if (finalSteps.length) setSteps(finalSteps);
+          if (finalOk && finalId) {
+            setProgressPct(100);
+            setProgressLabel("Готово");
+            setMsg(`Сервер добавлен (id: ${finalId})`);
+            await props.onCreated();
+          } else {
+            setProgressLabel("");
+            setMsg(finalErr ?? "Развёртывание не завершилось");
+          }
         } catch (err) {
           setMsg(err instanceof Error ? err.message : String(err));
+          setProgressLabel("");
         } finally {
           setBusy(false);
         }
@@ -639,6 +700,30 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
       <button className="btn primary" type="submit" disabled={busy}>
         {busy ? "Развёртывание…" : "Развернуть"}
       </button>
+      {busy && (
+        <div style={{ width: "100%", marginTop: "0.75rem" }}>
+          <div
+            style={{
+              height: 10,
+              background: "#2a2a35",
+              borderRadius: 5,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${progressPct}%`,
+                background: "linear-gradient(90deg, #3b82f6, #6366f1)",
+                transition: "width 0.25s ease-out",
+              }}
+            />
+          </div>
+          <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+            {progressPct}% · {progressLabel || "…"}
+          </p>
+        </div>
+      )}
       {msg && (
         <p
           className={msg.startsWith("Сервер добавлен") ? "muted" : "error"}
@@ -651,7 +736,8 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
         <ul className="muted" style={{ width: "100%", margin: "0.5rem 0 0", fontSize: "0.85rem", paddingLeft: "1.2rem" }}>
           {steps.map((s, i) => (
             <li key={`${s.step}-${i}`}>
-              <strong>{s.step}</strong>: {s.ok ? "ok" : "ошибка"}
+              <strong>{s.label ?? s.step}</strong>: {s.ok ? "ok" : "ошибка"}
+              {s.durationMs != null ? ` (${s.durationMs} ms)` : ""}
               {s.message ? ` — ${s.message}` : ""}
             </li>
           ))}
