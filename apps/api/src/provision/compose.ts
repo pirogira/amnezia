@@ -17,6 +17,8 @@ export function buildProvisionComposeYaml(hostListenPort: number): string {
     container_name: ${PROVISION_CONTAINER_NAME}
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/net/tun
     sysctls:
       - net.ipv4.ip_forward=1
     volumes:
@@ -26,7 +28,7 @@ export function buildProvisionComposeYaml(hostListenPort: number): string {
     command:
       - /bin/sh
       - -c
-      - "awg-quick up awg0 || wg-quick up awg0"
+      - "if command -v awg-quick >/dev/null 2>&1; then awg-quick up awg0; else wg-quick up awg0; fi"
     restart: unless-stopped
 `;
 }
