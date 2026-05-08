@@ -164,6 +164,9 @@ export function buildAmneziaAwgVpnRoot(input: AmneziaAwgVpnRootInput): Record<st
   inner.port = port;
   inner.psk_key = parsed.presharedKey;
   inner.server_pub_key = parsed.peerPublicKey;
+  /** Часть сборок Amnezia читает версию протокола из last_config, а не только из awg.protocol_version. */
+  inner.protocol_version = "2";
+  inner.transport_proto = "udp";
   const lastConfig = JSON.stringify(inner, null, 4);
   const awgTop: Record<string, unknown> = {};
   for (const k of AWG_JSON_PARAM_ORDER) {

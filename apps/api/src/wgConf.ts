@@ -111,8 +111,8 @@ export function parseAwgInterfaceParamsFromWgConf(conf: string): Record<string, 
 }
 
 /**
- * UAPI/`wg show` часто не выводит все поля (например S3/S4), а без них клиент ≠ сервер → нет трафика и «Legacy» в приложении.
- * Берём значение из дампа, если оно непустое, иначе — из серверного awg0.conf.
+ * Серверный `awg0.conf` — источник правды для Jc…I5; UAPI/`wg show` может отличаться или ломаться из‑за ANSI/версии.
+ * Сначала значение из файла, иначе из дампа.
  */
 export function mergeAwgDumpWithServerConf(
   fromDump: Record<string, string>,
@@ -120,11 +120,9 @@ export function mergeAwgDumpWithServerConf(
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const k of AWG_CONF_LINE_ORDER) {
-    const d = (fromDump[k] ?? "").trim();
     const f = (fromConfFile[k] ?? "").trim();
-    /** UAPI может отдать 0, в .conf на сервере — реальные S3/S4; иначе клиент ≠ сервер. */
-    if (d.length > 0 && !(d === "0" && f.length > 0 && f !== "0")) merged[k] = d;
-    else merged[k] = f;
+    const d = (fromDump[k] ?? "").trim();
+    merged[k] = f.length > 0 ? f : d;
   }
   for (const [k, v] of Object.entries(fromDump)) {
     if ((AWG_CONF_LINE_ORDER as readonly string[]).includes(k)) continue;

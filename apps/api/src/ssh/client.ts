@@ -325,12 +325,15 @@ export async function dockerExecWgShowDump(
   return r.stdout;
 }
 
-/** Серверный `awg0.conf` в контейнере (как в провижининге). Для полного набора Jc…S4 при сборке клиента. */
-const WG_SERVER_INTERFACE_CONF = "/etc/wireguard/awg0.conf";
+/** Где в контейнере лежит `awg0.conf` при провижининге (оба mount — один каталог на хосте). */
+const WG_SERVER_CONF_CANDIDATES = ["/etc/wireguard/awg0.conf", "/etc/amnezia/amneziawg/awg0.conf"] as const;
 
 export async function dockerReadWgServerInterfaceConf(auth: SshAuth, container: string): Promise<string | null> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
-  const cmd = `docker exec ${shellQuote(container)} cat ${shellQuote(WG_SERVER_INTERFACE_CONF)} 2>/dev/null || true`;
+  const inner = WG_SERVER_CONF_CANDIDATES.map((p) => `test -s ${shellQuote(p)} && cat ${shellQuote(p)} && exit 0`).join(
+    "; ",
+  );
+  const cmd = `docker exec ${shellQuote(container)} sh -lc ${shellQuote(`${inner}; exit 1`)}`;
   const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   if (r.code !== 0) return null;
   const t = r.stdout.trim();
