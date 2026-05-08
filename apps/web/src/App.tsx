@@ -43,6 +43,14 @@ type ClientRow = {
   created_at: string;
 };
 
+type DiscoverWgOk = {
+  dockerWgContainer: string;
+  wgInterface: string;
+  listenPort: number;
+  vpnSubnetCidr: string | null;
+  image?: string;
+};
+
 export function App() {
   const [token, setTok] = useState<string | null>(() => getToken());
   const [me, setMe] = useState<Me | null>(null);
@@ -379,12 +387,6 @@ export function App() {
         </div>
       )}
 
-      {activeServer && (
-        <div className="card">
-          <h2 className="h2">Порт и префлайт</h2>
-          <PortForm serverId={activeServer.id} currentPort={activeServer.listenPort} />
-        </div>
-      )}
     </div>
   );
 }
@@ -533,9 +535,6 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
   const [sshPort, setSshPort] = useState(22);
   const [sshKey, setSshKey] = useState("");
   const [sshPassword, setSshPassword] = useState("");
-  const [endpoint, setEndpoint] = useState("");
-  const [listenPort, setListenPort] = useState(51820);
-  const [cidr, setCidr] = useState("10.8.0.0/24");
   const [vlessJson, setVlessJson] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [steps, setSteps] = useState<ProvisionStep[]>([]);
@@ -569,9 +568,6 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
           sshUser: "root",
           sshPrivateKey: sshKey,
           sshPassword,
-          endpointHost: endpoint.trim() || undefined,
-          listenPort,
-          vpnSubnetCidr: cidr,
           vlessReality,
         });
         setBusy(true);
@@ -666,11 +662,6 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
         }
       }}
     >
-      <p className="muted" style={{ width: "100%", margin: "0 0 0.5rem", fontSize: "0.88rem" }}>
-        Чистый <strong>Ubuntu 22.04 / 24.04</strong>, SSH под <strong>root</strong> (ключ или пароль). Панель установит
-        Docker, образ <code>amneziavpn/amneziawg-go</code> (AmneziaWG 2.0), контейнер <code>amnezia-awg</code> и
-        зарегистрирует сервер. Если контейнер уже есть — только запись в панели.
-      </p>
       <div className="field">
         <label>Имя</label>
         <input value={name} onChange={(e) => setName(e.target.value)} />
@@ -708,26 +699,6 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
           value={sshPassword}
           onChange={(e) => setSshPassword(e.target.value)}
         />
-      </div>
-      <div className="field">
-        <label>Endpoint (публичный IP/DNS)</label>
-        <input
-          value={endpoint}
-          onChange={(e) => setEndpoint(e.target.value)}
-          placeholder="пусто = как SSH host"
-        />
-      </div>
-      <div className="field">
-        <label>Listen port UDP</label>
-        <input
-          type="number"
-          value={listenPort}
-          onChange={(e) => setListenPort(Number(e.target.value))}
-        />
-      </div>
-      <div className="field">
-        <label>VPN subnet /24</label>
-        <input value={cidr} onChange={(e) => setCidr(e.target.value)} />
       </div>
       <div className="field" style={{ flex: "1 1 100%" }}>
         <label>VLESS Reality (JSON, опционально)</label>
@@ -795,17 +766,9 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
   const [sshUser, setSshUser] = useState("root");
   const [sshKey, setSshKey] = useState("");
   const [sshPassword, setSshPassword] = useState("");
-  const [container, setContainer] = useState("amnezia-awg");
-  const [wgInterface, setWgInterface] = useState("wg0");
-  const [cidr, setCidr] = useState("10.8.0.0/24");
-  const [endpoint, setEndpoint] = useState("");
-  const [listenPort, setListenPort] = useState(51820);
-  const [composePath, setComposePath] = useState("");
-  const [hook, setHook] = useState("");
   const [vlessJson, setVlessJson] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
-  const [discoverBusy, setDiscoverBusy] = useState(false);
-  const [discoverMsg, setDiscoverMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   return (
     <form
@@ -813,7 +776,6 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
       onSubmit={async (e) => {
         e.preventDefault();
         setMsg(null);
-        setDiscoverMsg(null);
         let vlessReality: VlessReality | undefined;
         if (vlessJson.trim()) {
           try {
@@ -823,7 +785,19 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
             return;
           }
         }
+        setBusy(true);
         try {
+          const disc = await api<DiscoverWgOk>("/api/servers/discover-wg-docker", {
+            method: "POST",
+            json: {
+              sshHost,
+              sshPort,
+              sshUser,
+              sshPrivateKey: sshKey,
+              sshPassword,
+            },
+          });
+          const vpnSubnetCidr = disc.vpnSubnetCidr ?? "10.8.0.0/24";
           await api("/api/servers", {
             method: "POST",
             json: {
@@ -833,21 +807,23 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
               sshUser,
               sshPrivateKey: sshKey,
               sshPassword,
-              dockerWgContainer: container,
-            wgInterface,
-            vpnSubnetCidr: cidr,
-            endpointHost: endpoint || sshHost,
-            listenPort,
-            driverMode: "ssh" as const,
-            dockerComposePath: composePath || null,
-            portChangeHookCmd: hook || null,
-            vlessReality,
+              dockerWgContainer: disc.dockerWgContainer,
+              wgInterface: disc.wgInterface,
+              vpnSubnetCidr,
+              endpointHost: sshHost.trim(),
+              listenPort: disc.listenPort,
+              driverMode: "ssh" as const,
+              dockerComposePath: null,
+              portChangeHookCmd: null,
+              vlessReality,
             },
           });
           setMsg("Сервер добавлен");
           await props.onCreated();
         } catch (e) {
           setMsg(e instanceof Error ? e.message : String(e));
+        } finally {
+          setBusy(false);
         }
       }}
     >
@@ -893,130 +869,18 @@ function ServerForm(props: { onCreated: () => Promise<void> }) {
           placeholder="пароль пользователя SSH — не пароль панели"
         />
       </div>
-      <div className="field" style={{ flex: "1 1 280px" }}>
-        <label>Docker контейнер WG</label>
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "stretch", flexWrap: "wrap" }}>
-          <input
-            value={container}
-            onChange={(e) => setContainer(e.target.value)}
-            style={{ flex: "1 1 160px", minWidth: 0 }}
-          />
-          <button
-            type="button"
-            className="btn"
-            disabled={discoverBusy}
-            title="По SSH: найти контейнер с wg/awg, интерфейс и UDP-порт"
-            onClick={async () => {
-              setDiscoverMsg(null);
-              setDiscoverBusy(true);
-              try {
-                const tok = getToken();
-                const res = await fetch("/api/servers/discover-wg-docker", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
-                  },
-                  body: JSON.stringify({
-                    sshHost,
-                    sshPort,
-                    sshUser,
-                    sshPrivateKey: sshKey,
-                    sshPassword,
-                  }),
-                });
-                const j = (await res.json().catch(() => ({}))) as {
-                  dockerWgContainer?: string;
-                  wgInterface?: string;
-                  listenPort?: number;
-                  vpnSubnetCidr?: string | null;
-                  image?: string;
-                  message?: string;
-                  error?: string;
-                };
-                if (!res.ok) {
-                  setDiscoverMsg(j.message ?? j.error ?? `HTTP ${res.status}`);
-                  return;
-                }
-                if (j.dockerWgContainer) setContainer(j.dockerWgContainer);
-                if (j.wgInterface) setWgInterface(j.wgInterface);
-                if (typeof j.listenPort === "number") setListenPort(j.listenPort);
-                if (j.vpnSubnetCidr) setCidr(j.vpnSubnetCidr);
-                setDiscoverMsg(
-                  j.image
-                    ? `Определено: контейнер «${j.dockerWgContainer}», интерфейс ${j.wgInterface}, UDP ${j.listenPort}. Образ: ${j.image}`
-                    : `Определено: «${j.dockerWgContainer}», ${j.wgInterface}, UDP ${j.listenPort}`,
-                );
-              } catch (er) {
-                setDiscoverMsg(er instanceof Error ? er.message : String(er));
-              } finally {
-                setDiscoverBusy(false);
-              }
-            }}
-          >
-            {discoverBusy ? "…" : "Авто"}
-          </button>
-        </div>
-        {discoverMsg && (
-          <p className={discoverMsg.startsWith("Определено") ? "muted" : "error"} style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-            {discoverMsg}
-          </p>
-        )}
-      </div>
-      <div className="field">
-        <label>Интерфейс (wg0 или awg0)</label>
-        <input value={wgInterface} onChange={(e) => setWgInterface(e.target.value)} />
-        <p className="muted" style={{ margin: "0.25rem 0 0", fontSize: "0.8rem" }}>
-          AmneziaWG / awg2: часто <code>awg0</code>. Проверка: <code>docker exec ИМЯ_КОНТЕЙНЕРА wg show</code>
-        </p>
-      </div>
-      <div className="field">
-        <label>VPN subnet /24</label>
-        <input value={cidr} onChange={(e) => setCidr(e.target.value)} />
-      </div>
-      <div className="field">
-        <label>Endpoint host</label>
-        <input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="публичный IP/DNS" />
-      </div>
-      <div className="field">
-        <label>Listen port (клиент)</label>
-        <input
-          type="number"
-          value={listenPort}
-          onChange={(e) => setListenPort(Number(e.target.value))}
-        />
-      </div>
-      <div className="field" style={{ flex: "1 1 220px" }}>
-        <label>docker compose path (префлайт)</label>
-        <input
-          value={composePath}
-          onChange={(e) => setComposePath(e.target.value)}
-          placeholder="/opt/amnezia/docker-compose.yml"
-        />
-      </div>
-      <div className="field" style={{ flex: "1 1 220px" }}>
-        <label>Hook смены порта на VPS</label>
-        <input
-          value={hook}
-          onChange={(e) => setHook(e.target.value)}
-          placeholder="/opt/amnesia/set-port.sh"
-        />
-      </div>
       <div className="field" style={{ flex: "1 1 100%" }}>
         <label>VLESS Reality (JSON, опционально)</label>
         <textarea
           value={vlessJson}
           onChange={(e) => setVlessJson(e.target.value)}
-          rows={5}
-          placeholder={`{\n  "pbk": "…публичный ключ Reality…",\n  "sni": "aws.amazon.com",\n  "sid": "8b",\n  "fp": "chrome",\n  "spx": "/",\n  "type": "tcp",\n  "encryption": "none",\n  "security": "reality"\n}`}
+          rows={4}
+          placeholder={`{\n  "pbk": "…",\n  "sni": "aws.amazon.com",\n  "sid": "8b"\n}`}
           style={{ fontFamily: "monospace", fontSize: "0.85rem" }}
         />
-        <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.8rem" }}>
-          Нужно для протокола «VLESS» в выдаче клиента: ссылка vless:// строится из endpoint + порта сервера и этих полей. Панель пока не правит Xray на VPS — UUID в ссылке нужно вручную добавить в inbound (или позже через скрипт).
-        </p>
       </div>
-      <button className="btn primary" type="submit">
-        Добавить сервер
+      <button className="btn primary" type="submit" disabled={busy}>
+        {busy ? "Поиск контейнера и добавление…" : "Добавить сервер"}
       </button>
       {msg && (
         <p className={msg === "Сервер добавлен" ? "muted" : "error"} style={{ width: "100%", marginTop: "0.5rem" }}>
@@ -1033,10 +897,6 @@ function ClientForm(props: {
 }) {
   const [name, setName] = useState("user1");
   const [protocol, setProtocol] = useState<VpnProtocol>("amneziawg");
-  const [dns, setDns] = useState("1.1.1.1");
-  const [junkCount, setJunkCount] = useState<number | "">("");
-  const [mtu, setMtu] = useState<number | "">("");
-  const [expires, setExpires] = useState("");
   const [clientErr, setClientErr] = useState<string | null>(null);
   const [clientBusy, setClientBusy] = useState(false);
 
@@ -1048,10 +908,6 @@ function ClientForm(props: {
         setClientErr(null);
         setClientBusy(true);
         try {
-          const security: Record<string, unknown> = {};
-          if (dns) security.dns = dns;
-          if (junkCount !== "") security.junkPacketCount = Number(junkCount);
-          if (mtu !== "") security.mtu = Number(mtu);
           const r = await api<{ clientConf: string; id: string; assignedIp: string; vpnUri?: string }>(
             `/api/servers/${props.server.id}/clients`,
             {
@@ -1060,8 +916,8 @@ function ClientForm(props: {
                 name,
                 protocol,
                 listenPort: props.server.listenPort,
-                security,
-                expiresAt: expires || null,
+                security: {},
+                expiresAt: null,
               },
             },
           );
@@ -1089,91 +945,13 @@ function ClientForm(props: {
       </div>
       {protocol === "vless" && !props.server.vlessReality && (
         <p className="error" style={{ width: "100%" }}>
-          На этом сервере не задан JSON VLESS Reality. Отредактируйте сервер нельзя в UI — добавьте новый сервер с заполненным блоком «VLESS Reality» или через API.
+          Для VLESS на сервере нужен JSON VLESS Reality — добавьте сервер с этим полем или через API.
         </p>
       )}
-      {protocol === "vless" && (
-        <p className="muted" style={{ width: "100%", fontSize: "0.85rem" }}>
-          В ссылке будет новый UUID клиента. Его нужно прописать в Xray (или другом ядре) на VPS в том же inbound, что и остальные клиенты Reality, иначе подключение не примет.
-        </p>
-      )}
-      {protocol === "amneziawg" && (
-        <p className="muted" style={{ width: "100%", fontSize: "0.85rem" }}>
-          В .conf подставляются параметры AmneziaWG (Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5) с сервера по выводу <code>wg show</code>. По умолчанию полный туннель IPv4 и IPv6 (<code>0.0.0.0/0</code>, <code>::/0</code>) и MTU 1280. Подсеть клиента берётся с интерфейса в Docker (<code>ip addr</code>), если в карточке сервера CIDR другой — иначе часто «VPN подключён, интернета нет». Отключить только IPv6 можно полем <code>includeIpv6DefaultRoute: false</code> в теле API создания клиента. После создания — <code>vpn://…</code>.
-        </p>
-      )}
-      <p className="muted" style={{ width: "100%", margin: 0, fontSize: "0.88rem" }}>
-        UDP-порт в конфиге и в <code>vpn://</code>: <strong>{props.server.listenPort}</strong> — как в карточке сервера
-        (публикация Docker). Сменить порт — в блоке «Порт и префлайт» у этого сервера.
-      </p>
-      {protocol !== "vless" && (
-        <>
-          <div className="field">
-            <label>DNS</label>
-            <input value={dns} onChange={(e) => setDns(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>junk_packet_count (AWG)</label>
-            <input
-              type="number"
-              value={junkCount}
-              onChange={(e) => setJunkCount(e.target.value === "" ? "" : Number(e.target.value))}
-              placeholder="опционально"
-            />
-          </div>
-          <div className="field">
-            <label>MTU (опционально)</label>
-            <input
-              type="number"
-              value={mtu}
-              onChange={(e) => setMtu(e.target.value === "" ? "" : Number(e.target.value))}
-              placeholder="пусто = авто (1280 для AmneziaWG)"
-            />
-          </div>
-        </>
-      )}
-      <div className="field">
-        <label>Истекает (ISO)</label>
-        <input value={expires} onChange={(e) => setExpires(e.target.value)} placeholder="2027-01-01T00:00:00.000Z" />
-      </div>
       <button className="btn primary" type="submit" disabled={clientBusy}>
         {clientBusy ? "Создание…" : "Выдать клиента"}
       </button>
       {clientErr && <p className="error" style={{ width: "100%", margin: "0.5rem 0 0" }}>{clientErr}</p>}
-      <p className="muted" style={{ width: "100%", margin: "0.75rem 0 0", fontSize: "0.85rem" }}>
-        {protocol === "vless"
-          ? "Для VLESS — одна строка vless://… (и QR с ней), её можно вставить в клиенты с импортом по ссылке."
-          : "У WireGuard / AmneziaWG доступ — через файл .conf и QR; для AmneziaWG дополнительно — ссылка vpn:// и QR по ней для приложения Amnezia."}
-      </p>
-    </form>
-  );
-}
-
-function PortForm(props: { serverId: string; currentPort: number }) {
-  const [port, setPort] = useState(props.currentPort);
-  const [result, setResult] = useState<string | null>(null);
-  return (
-    <form
-      className="row"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        const r = await api<{ status: string; message?: string; port?: number }>(
-          `/api/servers/${props.serverId}/listen-port`,
-          { method: "POST", json: { port } },
-        );
-        setResult(JSON.stringify(r, null, 2));
-      }}
-    >
-      <div className="field">
-        <label>Новый listen port</label>
-        <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
-      </div>
-      <button className="btn primary" type="submit">
-        Применить (hook / БД)
-      </button>
-      {result && (
-        <pre style={{ width: "100%", whiteSpace: "pre-wrap", fontSize: "0.8rem" }}>{result}</pre>
-      )}
     </form>
   );
 }
