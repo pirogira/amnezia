@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Client, type ClientChannel } from "ssh2";
+import { stripAnsi } from "../wgConf.js";
 
 export type SshAuth = {
   host: string;
@@ -292,7 +293,7 @@ export async function dockerExecWgShowPublicKey(
   const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} show ${shellQuote(iface)}`;
   const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
-  const head = r.stdout.split(/\npeer:/i)[0] ?? r.stdout;
+  const head = stripAnsi(r.stdout.split(/\npeer:/i)[0] ?? r.stdout);
   const pk = /public key:\s*([A-Za-z0-9+/=]+)/.exec(head);
   if (!pk) {
     throw new Error(`wg show: не найден public key интерфейса: ${r.stdout.slice(0, 400)}`);
@@ -300,7 +301,10 @@ export async function dockerExecWgShowPublicKey(
   return pk[1].trim();
 }
 
-/** Полный вывод `wg show IFACE` (разбор Amnezia-параметров для .conf). */
+/**
+ * Сначала `wg show IFACE dump` (табличная строка устройства — надёжно для Jc…S4),
+ * иначе обычный `wg show IFACE` (для старых бинарей).
+ */
 export async function dockerExecWgShowDump(
   auth: SshAuth,
   container: string,
@@ -310,6 +314,11 @@ export async function dockerExecWgShowDump(
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
   assertWgExe(exe);
+  const cmdDump = `docker exec ${shellQuote(container)} ${shellQuote(exe)} show ${shellQuote(iface)} dump`;
+  const rd = await execRemoteAfterContainerRunning(auth, container, cmdDump);
+  if (rd.code === 0 && (rd.stdout.split(/\r?\n/)[0] ?? "").includes("\t")) {
+    return rd.stdout;
+  }
   const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} show ${shellQuote(iface)}`;
   const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);

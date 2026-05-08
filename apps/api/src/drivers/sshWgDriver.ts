@@ -19,6 +19,7 @@ import {
   mergeAwgDumpWithServerConf,
   parseAwgInterfaceParamsFromWgConf,
   parseAwgParamsFromWgShow,
+  parseAwgParamsFromWgShowMachineDump,
   parseSubnetLastOctets,
 } from "../wgConf.js";
 import type { ServerRow, VpnDriver } from "./types.js";
@@ -50,7 +51,9 @@ export const sshWgDriver: VpnDriver = {
     let awgNative: Record<string, string> | undefined;
     if (body.protocol === "amneziawg") {
       const dump = await dockerExecWgShowDump(auth, server.docker_wg_container, iface, wgExe);
-      const fromDump = parseAwgParamsFromWgShow(dump);
+      const fromMachine = parseAwgParamsFromWgShowMachineDump(dump);
+      const fromPretty = parseAwgParamsFromWgShow(dump);
+      const fromDump = { ...fromPretty, ...fromMachine };
       const confBody = await dockerReadWgServerInterfaceConf(auth, server.docker_wg_container);
       const fromFile = confBody ? parseAwgInterfaceParamsFromWgConf(confBody) : {};
       const merged = mergeAwgDumpWithServerConf(fromDump, fromFile);

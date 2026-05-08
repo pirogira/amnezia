@@ -20,6 +20,11 @@ const AWG_WGSHOW_TO_CONF: Record<string, string> = {
   i5: "I5",
 };
 
+/** Убрать ANSI из `wg show` (в TTY ключи вроде `jc` идут с bold — иначе парсер не находит поля). */
+export function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 /** Порядок строк AmneziaWG в .conf и в `vpn://` JSON. */
 export const AWG_CONF_LINE_ORDER = [
   "Jc",
@@ -46,14 +51,35 @@ export const AWG_CONF_LINE_ORDER = [
 export function parseAwgParamsFromWgShow(dump: string): Record<string, string> {
   const peerIdx = dump.search(/\npeer:/i);
   const head = peerIdx >= 0 ? dump.slice(0, peerIdx) : dump;
+  const headClean = stripAnsi(head);
   const out: Record<string, string> = {};
-  for (const line of head.split("\n")) {
+  for (const line of headClean.split("\n")) {
     const m = /^\s*([^:=]+)[:=]\s*(.+)$/.exec(line);
     if (!m) continue;
     const raw = m[1].trim().toLowerCase().replace(/\s+/g, "");
     const confKey = AWG_WGSHOW_TO_CONF[raw];
     if (!confKey) continue;
     out[confKey] = m[2].trim();
+  }
+  return out;
+}
+
+/**
+ * Первая строка `wg show IFACE dump` (amneziawg-tools): табы, без ANSI; s3/s4 есть всегда.
+ * Колонки 0–2: private, public, listen_port; 3–18: Jc…I5; 19: fwmark.
+ */
+export function parseAwgParamsFromWgShowMachineDump(text: string): Record<string, string> {
+  const firstLine = (text.split(/\r?\n/)[0] ?? "").trim();
+  if (!firstLine.includes("\t")) return {};
+  const cols = firstLine.split("\t");
+  const start = 3;
+  if (cols.length < start + AWG_CONF_LINE_ORDER.length) return {};
+  const out: Record<string, string> = {};
+  for (let i = 0; i < AWG_CONF_LINE_ORDER.length; i++) {
+    const k = AWG_CONF_LINE_ORDER[i];
+    const v = (cols[start + i] ?? "").trim();
+    if (v.length === 0 || v === "(null)") continue;
+    out[k] = v;
   }
   return out;
 }
@@ -96,7 +122,9 @@ export function mergeAwgDumpWithServerConf(
   for (const k of AWG_CONF_LINE_ORDER) {
     const d = (fromDump[k] ?? "").trim();
     const f = (fromConfFile[k] ?? "").trim();
-    merged[k] = d.length > 0 ? d : f;
+    /** UAPI может отдать 0, в .conf на сервере — реальные S3/S4; иначе клиент ≠ сервер. */
+    if (d.length > 0 && !(d === "0" && f.length > 0 && f !== "0")) merged[k] = d;
+    else merged[k] = f;
   }
   for (const [k, v] of Object.entries(fromDump)) {
     if ((AWG_CONF_LINE_ORDER as readonly string[]).includes(k)) continue;
