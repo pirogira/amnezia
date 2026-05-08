@@ -26,3 +26,19 @@ docker compose up -d panel-api
 ```
 
 Уточнять путь/ветку только если пользователь явно использует другие.
+
+3. **После правок, затрагивающих провижн / Docker AWG на VPS**, в конце ответа **дополнительно** выдать блок **полного сноса** того, что панель кладёт на VPS (чтобы пересобрать с нуля). Путь данных провижна: `/opt/amnesia` (не путать с репозиторием панели `/opt/amnesia-veb`):
+
+```bash
+sudo docker compose -f /opt/amnesia/docker-compose.yml down 2>/dev/null || true
+sudo docker rm -f amnezia-awg 2>/dev/null || true
+sudo rm -rf /opt/amnesia
+```
+
+Опционально снять только образ (если нужен чистый pull):
+
+```bash
+sudo docker rmi amneziavpn/amnezia-wg@sha256:ea050861bd2012a6265817636ce7c0c15764ef955782d953cef42e05c1381250 2>/dev/null || true
+```
+
+Если правки **не** про провижн/VPS, блок сноса **не** дублировать без запроса — достаточно деплоя панели.
