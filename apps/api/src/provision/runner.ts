@@ -230,7 +230,8 @@ export async function runProvisionAmneziaAwg(
   }
 
   const exists = await dockerContainerExists(auth, PROVISION_CONTAINER_NAME);
-  totalSteps = 7;
+  /** Reuse-ветка: +1 шаг `ip_forward` после сноса sysctl / VPS. */
+  totalSteps = exists ? 8 : 7;
   emit?.({
     event: "plan",
     totalSteps,
@@ -259,6 +260,10 @@ export async function runProvisionAmneziaAwg(
       ok: true,
       detail: "Используется существующий amnezia-awg",
     }));
+
+    /** Иначе после wipe sysctl / нового VPS «reuse»-путь не трогает forwarding — VPN без интернета. */
+    dr = await runStep("ip_forward", () => stepEnableIpv4Forward(auth));
+    if (!dr.ok) return { ok: false, steps, message: dr.message };
 
     const composeYamlReuse = buildProvisionComposeYaml();
     const natScriptReuse = buildPanelWgNatScript();
