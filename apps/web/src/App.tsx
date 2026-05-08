@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
 import type { VpnProtocol } from "@amnesia-veb/shared";
 import { api, getToken, setToken } from "./api.js";
 
@@ -209,6 +208,49 @@ export function App() {
             }}
           />
         )}
+        <div style={{ marginTop: "1rem", width: "100%" }}>
+          <button
+            type="button"
+            className="btn btn-server-delete"
+            disabled={servers.length === 0}
+            onClick={async () => {
+              if (servers.length === 0) return;
+              const lines = servers.map((s, i) => `${i + 1}. ${s.name} (${s.sshHost})`).join("\n");
+              const raw = window.prompt(
+                `Какой сервер удалить? Введите номер из списка и нажмите OK.\n\n${lines}`,
+              );
+              if (raw == null) return;
+              const n = Number.parseInt(String(raw).trim(), 10);
+              if (!Number.isInteger(n) || n < 1 || n > servers.length) {
+                window.alert("Неверный номер. Удаление отменено.");
+                return;
+              }
+              const target = servers[n - 1]!;
+              if (
+                !window.confirm(
+                  `Точно удалить сервер «${target.name}» и всех его клиентов из панели? Действие необратимо.`,
+                )
+              ) {
+                return;
+              }
+              try {
+                await api<{ ok: boolean }>(`/api/servers/${target.id}`, { method: "DELETE" });
+                const list = await api<Server[]>("/api/servers");
+                setServers(list);
+                setActiveServerId((prev) => {
+                  if (prev === target.id) return list[0]?.id ?? null;
+                  return prev && list.some((x) => x.id === prev) ? prev : (list[0]?.id ?? null);
+                });
+                setLastConf(null);
+                setLastVpnUri(null);
+              } catch (e) {
+                window.alert(e instanceof Error ? e.message : String(e));
+              }
+            }}
+          >
+            Удалить сервер…
+          </button>
+        </div>
       </div>
 
       {servers.length > 0 && (
@@ -232,31 +274,6 @@ export function App() {
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              className="btn btn-server-delete"
-              disabled={!activeServerId}
-              onClick={async () => {
-                const sid = activeServerId;
-                if (!sid) return;
-                const s = servers.find((x) => x.id === sid);
-                if (!window.confirm(`Удалить сервер «${s?.name ?? sid}» и всех его клиентов из панели?`)) return;
-                try {
-                  await api<{ ok: boolean }>(`/api/servers/${sid}`, { method: "DELETE" });
-                  const list = await api<Server[]>("/api/servers");
-                  setServers(list);
-                  setActiveServerId((prev) =>
-                    prev === sid ? (list[0]?.id ?? null) : prev && list.some((x) => x.id === prev) ? prev : (list[0]?.id ?? null),
-                  );
-                  setLastConf(null);
-                  setLastVpnUri(null);
-                } catch (e) {
-                  window.alert(e instanceof Error ? e.message : String(e));
-                }
-              }}
-            >
-              Удалить сервер
-            </button>
           </div>
           {activeServer ? (
             <>
@@ -886,9 +903,6 @@ function LastIssuedBlock(props: { vpnUri: string | null; conf: string | null }) 
           <button type="button" className="btn primary" onClick={() => void navigator.clipboard.writeText(vpnUri)}>
             Копировать ссылку
           </button>
-          <div className="vpn-uri-qr-wrap" aria-hidden>
-            <QRCodeSVG value={vpnUri} size={128} />
-          </div>
         </div>
       </div>
     );

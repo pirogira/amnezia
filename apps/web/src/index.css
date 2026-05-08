@@ -333,14 +333,6 @@ select.active-server-select:disabled {
   font-size: 0.9rem;
 }
 
-.qr {
-  background: #fff;
-  padding: 0.55rem;
-  border-radius: 10px;
-  display: inline-block;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-}
-
 code {
   font-size: 0.88em;
   background: rgba(4, 24, 35, 0.6);
@@ -423,19 +415,7 @@ code {
 }
 
 .vpn-uri-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1rem 1.25rem;
   margin-top: 0.9rem;
-}
-
-.vpn-uri-qr-wrap {
-  padding: 0.4rem;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.28);
-  line-height: 0;
 }
 
 .issued-conf-fallback .vpn-uri-shell {
