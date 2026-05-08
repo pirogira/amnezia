@@ -1,8 +1,9 @@
-import { randomBytes, randomInt } from "node:crypto";
+import { randomInt } from "node:crypto";
 import { x25519 } from "@noble/curves/ed25519.js";
 
-function randHex(bytes: number): string {
-  return randomBytes(bytes).toString("hex");
+/** Magic header H1–H4: десятичные uint32, как в Amnezia / `wg setconf` (hex-строка даёт Unable to parse H1). */
+function randMagicHeader(): string {
+  return String(randomInt(10_000, 4_000_000_000));
 }
 
 /** Случайные параметры AmneziaWG в формате строк для .conf (как у типичного клиента Amnezia). */
@@ -13,10 +14,10 @@ export function generateAwgObfuscationParams(): Record<string, string> {
   const jmax = String(randomInt(Math.max(50, jminN + 15), 130));
   const s1 = String(randomInt(0, 256));
   const s2 = String(randomInt(0, 256));
-  const h1 = randHex(8);
-  const h2 = randHex(8);
-  const h3 = randHex(8);
-  const h4 = randHex(8);
+  const h1 = randMagicHeader();
+  const h2 = randMagicHeader();
+  const h3 = randMagicHeader();
+  const h4 = randMagicHeader();
   return {
     Jc: jc,
     Jmin: jmin,
