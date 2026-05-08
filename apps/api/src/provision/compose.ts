@@ -18,9 +18,10 @@ export function buildProvisionComposeYaml(): string {
    * правила iptables на хосте.
    * Не задавать sysctls здесь: при network_mode: host runc отклоняет net.ipv4.ip_forward.
    * Включение forwarding на VPS делает stepEnableIpv4Forward до compose up.
-   * `pid: host` — PID 1 в контейнере это init хоста; panel-nat.sh вызывает iptables через
-   * `nsenter -t 1 -m` (mount-ns хоста), иначе бинарь из образа пишет в nft, а Docker — в legacy.
-   * `SYS_ADMIN` нужен для nsenter в mount namespace init (см. CAP в доке Docker).
+   * `pid: host` — PID 1 это init хоста; panel-nat.sh вызывает iptables через `nsenter -t 1 -m`
+   * (mount-ns хоста), иначе бинарь из образа пишет в nft, а Docker — в legacy.
+   * `privileged: true` — иначе на Ubuntu Docker часто `Permission denied` на `/proc/1/ns/mnt`
+   * (AppArmor/политика), даже при CAP_SYS_ADMIN.
    */
   return `services:
   ${PROVISION_CONTAINER_NAME}:
@@ -28,9 +29,7 @@ export function buildProvisionComposeYaml(): string {
     container_name: ${PROVISION_CONTAINER_NAME}
     network_mode: host
     pid: host
-    cap_add:
-      - NET_ADMIN
-      - SYS_ADMIN
+    privileged: true
     devices:
       - /dev/net/tun
     volumes:

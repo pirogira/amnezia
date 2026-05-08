@@ -40,10 +40,10 @@ if docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "pid_mode: $PM"
   fi
   echo "cap_add: $(docker inspect -f '{{.HostConfig.CapAdd}}' "$CONTAINER" 2>/dev/null)"
-  if ! docker inspect -f '{{.HostConfig.CapAdd}}' "$CONTAINER" 2>/dev/null | grep -q SYS_ADMIN; then
-    echo "ВНИМАНИЕ: нет CAP_SYS_ADMIN → nsenter в mount-ns init будет Operation not permitted; добавьте в compose."
-  fi
   echo "privileged: $(docker inspect -f '{{.HostConfig.Privileged}}' "$CONTAINER" 2>/dev/null)"
+  if docker inspect -f '{{.HostConfig.Privileged}}' "$CONTAINER" 2>/dev/null | grep -qi false; then
+    echo "ВНИМАНИЕ: privileged=false — при Permission denied на /proc/1/ns/mnt в П.5 нужен privileged: true (AppArmor Docker)."
+  fi
 fi
 
 echo ""

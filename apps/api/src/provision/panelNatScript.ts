@@ -10,7 +10,7 @@ export function buildPanelWgNatScript(): string {
   return [
     "#!/bin/sh",
     "# amnesia-veb: NAT и FORWARD для клиентов VPN.",
-    "# Требуется compose: network_mode host, pid host, cap SYS_ADMIN (nsenter в mount-ns init).",
+    "# Требуется compose: network_mode host, pid host, privileged (доступ /proc/1/ns/mnt для nsenter).",
     "set -eu",
     "ACTION=${1:?}",
     "IFACE=${2:?}",
