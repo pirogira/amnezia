@@ -44,17 +44,110 @@ export async function dockerResolveWgExe(
   if (!/^awg\d+$/.test(iface)) return "wg";
   for (const awgExe of AWG_PROBE_EXES) {
     const cmd = `docker exec ${shellQuote(container)} ${shellQuote(awgExe)} show ${shellQuote(iface)}`;
-    const r = await execRemote(auth, cmd);
+    const r = await execRemoteAfterContainerRunning(auth, container, cmd);
     if (r.code === 0) return awgExe;
   }
   return "wg";
+}
+
+export type ExecRemoteResult = { stdout: string; stderr: string; code: number | null };
+
+function dockerDaemonReportsContainerRestarting(combinedOut: string): boolean {
+  return /is restarting,?\s*wait until the container is running/i.test(combinedOut);
+}
+
+function trimLogSnippet(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}…`;
+}
+
+/**
+ * Ждёт, пока `docker inspect` вернёт Status=running (не restarting/exited).
+ * При exited/dead или таймауте — сообщение с хвостом docker logs.
+ */
+export async function dockerWaitUntilRunning(
+  auth: SshAuth,
+  container: string,
+  opts?: { maxAttempts?: number; delayMs?: number },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  assertNoShellInjection(container, SAFE_CONTAINER, "container");
+  const maxAttempts = opts?.maxAttempts ?? 90;
+  const delayMs = opts?.delayMs ?? 2000;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const r = await execRemote(
+      auth,
+      `docker inspect --format '{{.State.Status}}' ${shellQuote(container)} 2>/dev/null || echo missing`,
+    );
+    const status = r.stdout.trim();
+    if (status === "running") return { ok: true };
+    if (status === "exited" || status === "dead") {
+      const logsR = await execRemote(auth, `docker logs --tail 100 ${shellQuote(container)} 2>&1`);
+      const logs = trimLogSnippet(logsR.stdout || logsR.stderr, 2500);
+      return {
+        ok: false,
+        message: `Контейнер ${container} остановлен (${status}). Часто так бывает при падении awg-quick/wg-quick внутри образа. Логи:\n${logs}`,
+      };
+    }
+    if (status === "missing" || status === "") {
+      if (i >= 8) {
+        return {
+          ok: false,
+          message: `Контейнер ${container} не найден (docker inspect). Проверьте имя контейнера.`,
+        };
+      }
+    }
+    await new Promise((res) => setTimeout(res, delayMs));
+  }
+
+  const logsR = await execRemote(auth, `docker logs --tail 120 ${shellQuote(container)} 2>&1`);
+  const logs = trimLogSnippet(logsR.stdout || logsR.stderr, 2500);
+  const ins = await execRemote(
+    auth,
+    `docker inspect ${shellQuote(container)} --format '{{.State.Status}}' 2>/dev/null`,
+  );
+  return {
+    ok: false,
+    message: `Таймаут ожидания running для ${container} (последний status: ${ins.stdout.trim() || "?"}). Контейнер может быть в цикле перезапусков — смотрите логи на сервере. Логи:\n${logs}`,
+  };
+}
+
+/**
+ * Выполняет SSH-команду; если Docker отвечает, что контейнер перезапускается, ждёт running и повторяет exec.
+ */
+export async function execRemoteAfterContainerRunning(
+  auth: SshAuth,
+  container: string,
+  command: string,
+  stdin?: string,
+): Promise<ExecRemoteResult> {
+  assertNoShellInjection(container, SAFE_CONTAINER, "container");
+  const maxOuter = 12;
+  let last = await execRemote(auth, command, stdin);
+  for (let i = 0; i < maxOuter; i++) {
+    const combined = `${last.stderr}${last.stdout}`;
+    if (last.code === 0 || !dockerDaemonReportsContainerRestarting(combined)) {
+      return last;
+    }
+    const w = await dockerWaitUntilRunning(auth, container, { maxAttempts: 40, delayMs: 2000 });
+    if (!w.ok) {
+      return {
+        stdout: last.stdout,
+        stderr: `${combined.trim()}\n---\n${w.message}`,
+        code: last.code ?? 1,
+      };
+    }
+    last = await execRemote(auth, command, stdin);
+  }
+  return last;
 }
 
 export async function execRemote(
   auth: SshAuth,
   command: string,
   stdin?: string,
-): Promise<{ stdout: string; stderr: string; code: number | null }> {
+): Promise<ExecRemoteResult> {
   const hasKey = Boolean(auth.privateKey && auth.privateKey.length > 0);
   const hasPwd = Boolean(auth.password && auth.password.length > 0);
   if (!hasKey && !hasPwd) {
@@ -108,7 +201,7 @@ export async function dockerExecWgGenkey(
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertWgExe(exe);
   const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} genkey`;
-  const r = await execRemote(auth, cmd);
+  const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   if (r.code !== 0) throw new Error(`wg genkey failed: ${r.stderr || r.stdout}`);
   return r.stdout.trim();
 }
@@ -125,7 +218,7 @@ export async function dockerExecWgPubkey(
     throw new Error("privateKey has unexpected characters");
   }
   const cmd = `docker exec -i ${shellQuote(container)} ${shellQuote(exe)} pubkey`;
-  const r = await execRemote(auth, cmd, privateKey.trim() + "\n");
+  const r = await execRemoteAfterContainerRunning(auth, container, cmd, privateKey.trim() + "\n");
   if (r.code !== 0) throw new Error(`wg pubkey failed: ${r.stderr || r.stdout}`);
   return r.stdout.trim();
 }
@@ -136,9 +229,9 @@ export async function dockerExecWgPubkey(
 export async function dockerResolveWgIface(auth: SshAuth, container: string, prefer: string): Promise<string> {
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(prefer, SAFE_IFACE, "iface");
-  let r = await execRemote(auth, `docker exec ${shellQuote(container)} wg show`);
+  let r = await execRemoteAfterContainerRunning(auth, container, `docker exec ${shellQuote(container)} wg show`);
   if (r.code !== 0 || !/^\s*interface:/m.test(r.stdout)) {
-    r = await execRemote(auth, `docker exec ${shellQuote(container)} awg show`);
+    r = await execRemoteAfterContainerRunning(auth, container, `docker exec ${shellQuote(container)} awg show`);
   }
   if (r.code !== 0) throw new Error(`wg/awg show failed: ${r.stderr || r.stdout}`);
   const names: string[] = [];
@@ -170,7 +263,7 @@ export async function dockerDetectIfaceSlash24Prefix(
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
   const cmd = `docker exec ${shellQuote(container)} ip -4 -o addr show dev ${shellQuote(iface)} 2>/dev/null || true`;
-  const r = await execRemote(auth, cmd);
+  const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   const m = /\binet\s+(\d+\.\d+\.\d+)\.\d+\/(24)\b/.exec(r.stdout);
   if (!m) return null;
   return m[1];
@@ -186,7 +279,7 @@ export async function dockerExecWgShowPublicKey(
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
   assertWgExe(exe);
   const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} show ${shellQuote(iface)}`;
-  const r = await execRemote(auth, cmd);
+  const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
   const head = r.stdout.split(/\npeer:/i)[0] ?? r.stdout;
   const pk = /public key:\s*([A-Za-z0-9+/=]+)/.exec(head);
@@ -207,7 +300,7 @@ export async function dockerExecWgShowDump(
   assertNoShellInjection(iface, SAFE_IFACE, "iface");
   assertWgExe(exe);
   const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} show ${shellQuote(iface)}`;
-  const r = await execRemote(auth, cmd);
+  const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   if (r.code !== 0) throw new Error(`wg show failed: ${r.stderr || r.stdout}`);
   return r.stdout;
 }
@@ -220,7 +313,7 @@ export async function dockerExecWgGenpsk(
   assertNoShellInjection(container, SAFE_CONTAINER, "container");
   assertWgExe(exe);
   const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} genpsk`;
-  const r = await execRemote(auth, cmd);
+  const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   if (r.code !== 0) throw new Error(`wg genpsk failed: ${r.stderr || r.stdout}`);
   const psk = r.stdout.trim();
   if (!/^[A-Za-z0-9+/=]+$/.test(psk)) throw new Error("invalid wg genpsk output");
@@ -252,13 +345,13 @@ export async function dockerExecWgSetPeer(
     const tmpPath = `/tmp/${tmpBase}`;
     const script = `umask 077; cat >${shellQuote(tmpPath)} && ${shellQuote(exe)} set ${shellQuote(iface)} peer ${shellQuote(clientPub)} allowed-ips ${shellQuote(allowedIps)} preshared-key ${shellQuote(tmpPath)}; e=$?; rm -f ${shellQuote(tmpPath)}; exit $e`;
     const cmd = `docker exec -i ${shellQuote(container)} sh -c ${shellQuote(script)}`;
-    const r = await execRemote(auth, cmd, `${presharedKey}\n`);
+    const r = await execRemoteAfterContainerRunning(auth, container, cmd, `${presharedKey}\n`);
     if (r.code !== 0) throw new Error(`${exe} set peer failed: ${r.stderr || r.stdout}`);
     return;
   }
 
   const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} set ${shellQuote(iface)} peer ${shellQuote(clientPub)} allowed-ips ${shellQuote(allowedIps)}`;
-  const r = await execRemote(auth, cmd);
+  const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   if (r.code !== 0) throw new Error(`${exe} set peer failed: ${r.stderr || r.stdout}`);
 }
 
@@ -274,7 +367,7 @@ export async function dockerExecWgRemovePeer(
   assertWgExe(exe);
   if (!/^[A-Za-z0-9+/=]+$/.test(clientPub)) throw new Error("invalid client public key");
   const cmd = `docker exec ${shellQuote(container)} ${shellQuote(exe)} set ${shellQuote(iface)} peer ${shellQuote(clientPub)} remove`;
-  const r = await execRemote(auth, cmd);
+  const r = await execRemoteAfterContainerRunning(auth, container, cmd);
   if (r.code !== 0) throw new Error(`${exe} remove peer failed: ${r.stderr || r.stdout}`);
 }
 

@@ -1,4 +1,11 @@
-import { execRemote, SAFE_CONTAINER, SAFE_IFACE, shellQuote } from "../ssh/client.js";
+import {
+  dockerWaitUntilRunning,
+  execRemote,
+  execRemoteAfterContainerRunning,
+  SAFE_CONTAINER,
+  SAFE_IFACE,
+  shellQuote,
+} from "../ssh/client.js";
 import type { SshAuth } from "../ssh/client.js";
 import {
   PROVISION_AWG_CONF,
@@ -109,12 +116,19 @@ export async function stepWaitWgShow(auth: SshAuth, container: string, preferred
   if (!SAFE_IFACE.test(preferred)) throw new Error("Invalid iface");
 
   await new Promise((res) => setTimeout(res, 3000));
+  const runningFirst = await dockerWaitUntilRunning(auth, container, { maxAttempts: 60, delayMs: 2000 });
+  if (!runningFirst.ok) return runningFirst;
+
   const maxAttempts = 45;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let listOut = "";
     for (const listExe of ["wg", "awg"] as const) {
-      const lr = await execRemote(auth, `docker exec ${shellQuote(container)} ${shellQuote(listExe)} show`);
+      const lr = await execRemoteAfterContainerRunning(
+        auth,
+        container,
+        `docker exec ${shellQuote(container)} ${shellQuote(listExe)} show`,
+      );
       if (lr.code === 0 && /interface:/m.test(lr.stdout)) {
         listOut = lr.stdout;
         break;
@@ -137,8 +151,9 @@ export async function stepWaitWgShow(auth: SshAuth, container: string, preferred
     for (const iface of tryList) {
       if (!SAFE_IFACE.test(iface)) continue;
       for (const exe of ["wg", "awg"] as const) {
-        const r = await execRemote(
+        const r = await execRemoteAfterContainerRunning(
           auth,
+          container,
           `docker exec ${shellQuote(container)} ${shellQuote(exe)} show ${shellQuote(iface)}`,
         );
         if (r.code === 0 && r.stdout.includes("public key:")) {

@@ -3,6 +3,7 @@ import {
   dockerResolveWgExe,
   dockerResolveWgIface,
   execRemote,
+  execRemoteAfterContainerRunning,
   SAFE_CONTAINER,
   shellQuote,
 } from "./client.js";
@@ -100,8 +101,9 @@ export async function discoverWgDockerOnHost(auth: SshAuth): Promise<WgDockerDis
       exe = "wg";
     }
 
-    const showR = await execRemote(
+    const showR = await execRemoteAfterContainerRunning(
       auth,
+      row.name,
       `docker exec ${shellQuote(row.name)} ${shellQuote(exe)} show ${shellQuote(iface)}`,
     );
     if (showR.code !== 0) continue;
