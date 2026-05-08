@@ -48,7 +48,7 @@ export function parseAwgParamsFromWgShow(dump: string): Record<string, string> {
   const head = peerIdx >= 0 ? dump.slice(0, peerIdx) : dump;
   const out: Record<string, string> = {};
   for (const line of head.split("\n")) {
-    const m = /^\s*([^:]+):\s*(.+)$/.exec(line);
+    const m = /^\s*([^:=]+)[:=]\s*(.+)$/.exec(line);
     if (!m) continue;
     const raw = m[1].trim().toLowerCase().replace(/\s+/g, "");
     const confKey = AWG_WGSHOW_TO_CONF[raw];
@@ -56,6 +56,54 @@ export function parseAwgParamsFromWgShow(dump: string): Record<string, string> {
     out[confKey] = m[2].trim();
   }
   return out;
+}
+
+/** Парсит только строки AmneziaWG из секции `[Interface]` серверного `.conf`. */
+export function parseAwgInterfaceParamsFromWgConf(conf: string): Record<string, string> {
+  let section: "none" | "interface" = "none";
+  const out: Record<string, string> = {};
+  const order = AWG_CONF_LINE_ORDER as readonly string[];
+  for (const rawLine of conf.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line === "[Interface]") {
+      section = "interface";
+      continue;
+    }
+    if (line.startsWith("[")) {
+      section = "none";
+      continue;
+    }
+    if (section !== "interface") continue;
+    const eq = line.indexOf("=");
+    if (eq < 0) continue;
+    const k = line.slice(0, eq).trim();
+    const v = line.slice(eq + 1).trim();
+    if (order.includes(k)) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * UAPI/`wg show` часто не выводит все поля (например S3/S4), а без них клиент ≠ сервер → нет трафика и «Legacy» в приложении.
+ * Берём значение из дампа, если оно непустое, иначе — из серверного awg0.conf.
+ */
+export function mergeAwgDumpWithServerConf(
+  fromDump: Record<string, string>,
+  fromConfFile: Record<string, string>,
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const k of AWG_CONF_LINE_ORDER) {
+    const d = (fromDump[k] ?? "").trim();
+    const f = (fromConfFile[k] ?? "").trim();
+    merged[k] = d.length > 0 ? d : f;
+  }
+  for (const [k, v] of Object.entries(fromDump)) {
+    if ((AWG_CONF_LINE_ORDER as readonly string[]).includes(k)) continue;
+    const t = v.trim();
+    if (t.length > 0) merged[k] = t;
+  }
+  return merged;
 }
 
 export function formatAwgInterfaceLines(params: Record<string, string>): string {

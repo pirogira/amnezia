@@ -8,6 +8,7 @@ import {
   dockerExecWgSetPeer,
   dockerExecWgShowDump,
   dockerExecWgShowPublicKey,
+  dockerReadWgServerInterfaceConf,
   dockerResolveWgExe,
   dockerResolveWgIface,
 } from "../ssh/client.js";
@@ -15,6 +16,8 @@ import { buildSshAuthFromServer } from "../ssh/buildAuth.js";
 import {
   buildClientConf,
   hostIpFromOctet,
+  mergeAwgDumpWithServerConf,
+  parseAwgInterfaceParamsFromWgConf,
   parseAwgParamsFromWgShow,
   parseSubnetLastOctets,
 } from "../wgConf.js";
@@ -47,8 +50,11 @@ export const sshWgDriver: VpnDriver = {
     let awgNative: Record<string, string> | undefined;
     if (body.protocol === "amneziawg") {
       const dump = await dockerExecWgShowDump(auth, server.docker_wg_container, iface, wgExe);
-      const parsed = parseAwgParamsFromWgShow(dump);
-      if (Object.keys(parsed).length > 0) awgNative = parsed;
+      const fromDump = parseAwgParamsFromWgShow(dump);
+      const confBody = await dockerReadWgServerInterfaceConf(auth, server.docker_wg_container);
+      const fromFile = confBody ? parseAwgInterfaceParamsFromWgConf(confBody) : {};
+      const merged = mergeAwgDumpWithServerConf(fromDump, fromFile);
+      if (Object.values(merged).some((v) => v.trim().length > 0)) awgNative = merged;
     }
 
     const conf = buildClientConf({
