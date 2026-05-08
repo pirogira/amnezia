@@ -18,6 +18,8 @@ export function buildProvisionComposeYaml(): string {
    * правила iptables на хосте.
    * Не задавать sysctls здесь: при network_mode: host runc отклоняет net.ipv4.ip_forward.
    * Включение forwarding на VPS делает stepEnableIpv4Forward до compose up.
+   * Бинарь iptables-legacy с хоста: в образе amnezia-wg часто только nft-iptables, PostUp тогда
+   * пишет не в те таблицы, где Docker держит FORWARD (см. «iptables-legacy tables present»).
    */
   return `services:
   ${PROVISION_CONTAINER_NAME}:
@@ -30,6 +32,7 @@ export function buildProvisionComposeYaml(): string {
       - /dev/net/tun
     volumes:
       - ${PROVISION_AWG_DIR}:/etc/wireguard
+      - /usr/sbin/iptables-legacy:/usr/sbin/iptables-legacy:ro
     command:
       - /bin/sh
       - -c

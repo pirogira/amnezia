@@ -32,6 +32,10 @@ if docker inspect "$CONTAINER" >/dev/null 2>&1; then
 fi
 
 echo ""
+echo "=== 4b) iptables-legacy внутри контейнера (должен быть с хоста bind-mount, иначе только nft) ==="
+docker exec "$CONTAINER" sh -c 'ls -la /usr/sbin/iptables-legacy 2>&1; /usr/sbin/iptables-legacy -V 2>&1' 2>&1 || echo "exec failed"
+
+echo ""
 echo "=== 5) Интерфейс ${IFACE} на хосте (network_mode: host — интерфейс на хосте) ==="
 ip -brief link show "${IFACE}" 2>&1 || echo "интерфейса ${IFACE} нет (контейнер не поднял туннель?)"
 
