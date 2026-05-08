@@ -10,7 +10,11 @@ export const PROVISION_AWG_CONF = `${PROVISION_AWG_DIR}/awg0.conf`;
 export const PROVISION_CONTAINER_NAME = "amnezia-awg";
 
 export function buildProvisionComposeYaml(hostListenPort: number): string {
-  /** Как в типичных WG-образах: конфиг в /etc/wireguard → `awg-quick up awg0`. */
+  /**
+   * Конфиг в /etc/wireguard. После `*-quick up` нужен долгоживущий PID 1: при режиме kernel‑WG
+   * `wg-quick` завершается сразу после настройки интерфейса — без `tail` контейнер выходит и
+   * `restart: unless-stopped` крутит бесконечный цикл в логах.
+   */
   return `services:
   ${PROVISION_CONTAINER_NAME}:
     image: ${AMNEZIA_WG_IMAGE}
@@ -28,7 +32,7 @@ export function buildProvisionComposeYaml(hostListenPort: number): string {
     command:
       - /bin/sh
       - -c
-      - "if command -v awg-quick >/dev/null 2>&1; then awg-quick up awg0; else wg-quick up awg0; fi"
+      - "if command -v awg-quick >/dev/null 2>&1; then awg-quick up awg0; else wg-quick up awg0; fi; exec tail -f /dev/null"
     restart: unless-stopped
 `;
 }
