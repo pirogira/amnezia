@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # Интерактивная установка веб-панели на Linux (Docker Compose).
 # Запуск из клонированного репозитория: sudo bash install/install.sh
-# Или через: curl .../get.sh | sudo -E bash
+# Или через: curl .../get.sh | sudo -E bash / curl .../bootstrap.sh | sudo -E bash
 
 set -euo pipefail
 
 if [[ "${EUID:-0}" -ne 0 ]]; then
   echo "Запустите от root: sudo bash install/install.sh" >&2
   exit 1
+fi
+
+# При `curl ... | sudo bash` stdin — поток от curl и после него закрыт; без TTY все read сразу EOF (set -e).
+if [[ ! -t 0 ]] && [[ -r /dev/tty ]]; then
+  exec 0</dev/tty
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
