@@ -60,6 +60,8 @@ export function parseAwgLayoutFromCompose(composeYaml: string, hints?: Partial<A
 }
 
 export function extractImageFromCompose(composeYaml: string): string | null {
-  const m = /^\s*image:\s*(\S+)\s*$/m.exec(composeYaml);
+  const blocks = composeYaml.split(/^services:\s*$/m);
+  const body = blocks.length > 1 ? blocks.slice(1).join("services:") : composeYaml;
+  const m = /^\s+image:\s*(\S+)\s*$/m.exec(body);
   return m?.[1] ?? null;
 }

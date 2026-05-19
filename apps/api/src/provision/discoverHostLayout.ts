@@ -9,6 +9,7 @@ import {
   PROVISION_COMPOSE_PATH,
   PROVISION_CONTAINER_NAME,
 } from "./compose.js";
+import { inspectPullableContainerImage, resolvePullableDockerImage } from "./dockerImage.js";
 import { assertSafeContainerName, assertSafeHostPath } from "./layout.js";
 
 const DEFAULT_COMPOSE_CANDIDATES = [
@@ -68,17 +69,6 @@ function safePathOrNull(p: string): string | null {
   } catch {
     return null;
   }
-}
-
-async function inspectContainerImage(auth: SshAuth, containerName: string): Promise<string | null> {
-  if (!SAFE_CONTAINER.test(containerName)) return null;
-  const r = await execRemote(
-    auth,
-    `docker inspect ${shellQuote(containerName)} --format '{{.Config.Image}}' 2>/dev/null`,
-  );
-  if (r.code !== 0) return null;
-  const image = r.stdout.trim();
-  return image.length > 0 ? image : null;
 }
 
 async function containerExistsOnHost(auth: SshAuth, containerName: string): Promise<boolean> {
@@ -165,8 +155,8 @@ async function discoverAwgFromAnyContainer(
   const ordered = prefer && names.includes(prefer) ? [prefer, ...rest] : rest;
 
   for (const name of ordered) {
-    const image = await inspectContainerImage(auth, name);
-    if (!image) continue;
+    if (!(await containerExistsOnHost(auth, name))) continue;
+    const image = await inspectPullableContainerImage(auth, name);
     const awgDir = (await discoverAwgDirFromContainer(auth, name)) ?? PROVISION_AWG_DIR;
     return { containerName: name, awgDir, image };
   }
@@ -318,13 +308,15 @@ function synthesizeForNewProvision(
   image: string,
   containerName: string = PROVISION_CONTAINER_NAME,
   awgDir: string = PROVISION_AWG_DIR,
+  imageContainerHint?: string,
 ): { composePath: string; composeYaml: string; awgDir: string } {
+  const pullImage = resolvePullableDockerImage(image, { containerName: imageContainerHint });
   return {
     composePath: PROVISION_COMPOSE_PATH,
     composeYaml: buildProvisionComposeYamlForHost({
       awgDir,
       containerName: assertSafeContainerName(containerName),
-      image,
+      image: pullImage,
     }),
     awgDir,
   };
@@ -336,16 +328,20 @@ async function resolveReferenceContainer(
 ): Promise<{ containerName: string; image: string } | null> {
   const prefer = reference.docker_wg_container?.trim();
   if (prefer && (await containerExistsOnHost(auth, prefer))) {
-    const image = (await inspectContainerImage(auth, prefer)) ?? AMNEZIA_WG_IMAGE;
+    const image = await inspectPullableContainerImage(auth, prefer);
     return { containerName: prefer, image };
   }
   const disc = await discoverWgDockerOnHost(auth);
-  if (disc.ok) return { containerName: disc.dockerWgContainer, image: disc.image };
+  if (disc.ok) {
+    return {
+      containerName: disc.dockerWgContainer,
+      image: resolvePullableDockerImage(disc.image, { containerName: disc.dockerWgContainer }),
+    };
+  }
   for (const name of await listDockerContainerNames(auth)) {
     if (!/amnezia|awg|wireguard|wg/i.test(name)) continue;
     if (!(await containerExistsOnHost(auth, name))) continue;
-    const image = await inspectContainerImage(auth, name);
-    if (image) return { containerName: name, image };
+    return { containerName: name, image: await inspectPullableContainerImage(auth, name) };
   }
   return null;
 }
@@ -381,15 +377,19 @@ export async function discoverComposeOnReferenceServer(reference: ServerRow): Pr
     const disc = await discoverWgDockerOnHost(auth);
     if (disc.ok) {
       if (!container) container = disc.dockerWgContainer;
-      if (!imageFromDocker) imageFromDocker = disc.image;
+      if (!imageFromDocker) {
+        imageFromDocker = resolvePullableDockerImage(disc.image, {
+          containerName: disc.dockerWgContainer,
+        });
+      }
       if (!awgFromMount) {
         awgFromMount = await discoverAwgDirFromContainer(auth, disc.dockerWgContainer);
       }
     }
   }
 
-  if (container && !imageFromDocker) {
-    imageFromDocker = (await inspectContainerImage(auth, container)) ?? "";
+  if (container && !imageFromDocker && (await containerExistsOnHost(auth, container))) {
+    imageFromDocker = await inspectPullableContainerImage(auth, container);
   }
 
   const candidates: string[] = [];
@@ -426,13 +426,23 @@ export async function discoverComposeOnReferenceServer(reference: ServerRow): Pr
     awgFromMount ?? found.awgDirs[0] ?? (await discoverAwgDirFromKnownConf(auth, preferIface));
   if (imageFromDocker) {
     const hostAwgDir = awgDir ?? PROVISION_AWG_DIR;
-    return synthesizeForNewProvision(imageFromDocker, PROVISION_CONTAINER_NAME, hostAwgDir);
+    return synthesizeForNewProvision(
+      imageFromDocker,
+      PROVISION_CONTAINER_NAME,
+      hostAwgDir,
+      container || undefined,
+    );
   }
 
   const resolved = await resolveReferenceContainer(auth, reference);
   if (resolved) {
     const hostAwgDir = awgDir ?? PROVISION_AWG_DIR;
-    return synthesizeForNewProvision(resolved.image, PROVISION_CONTAINER_NAME, hostAwgDir);
+    return synthesizeForNewProvision(
+      resolved.image,
+      PROVISION_CONTAINER_NAME,
+      hostAwgDir,
+      resolved.containerName,
+    );
   }
 
   const hint = container

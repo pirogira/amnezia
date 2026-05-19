@@ -8,6 +8,7 @@ import {
 } from "../ssh/client.js";
 import type { SshAuth } from "../ssh/client.js";
 import { AMNEZIA_WG_IMAGE } from "./compose.js";
+import { resolvePullableDockerImage } from "./dockerImage.js";
 import { type AwgHostLayout, DEFAULT_AWG_LAYOUT, extractImageFromCompose } from "./layout.js";
 import { PANEL_WG_NAT_SCRIPT_BASENAME } from "./panelNatScript.js";
 
@@ -85,7 +86,10 @@ export async function stepPrepareNewServerHost(
     return { ok: false, message: "Некорректный listenPort" };
   }
   const port = String(listenPort);
-  const image = (composeYaml && extractImageFromCompose(composeYaml)) || AMNEZIA_WG_IMAGE;
+  const image = resolvePullableDockerImage(
+    (composeYaml && extractImageFromCompose(composeYaml)) || AMNEZIA_WG_IMAGE,
+    { containerName: layout.containerName },
+  );
   const script = `set -euo pipefail
 if [ -f ${shellQuote(layout.composePath)} ]; then
   docker compose -f ${shellQuote(layout.composePath)} down --remove-orphans 2>/dev/null || true
