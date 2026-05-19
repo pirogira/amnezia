@@ -14,12 +14,21 @@ const DEFAULT_COMPOSE_CANDIDATES = [
   "/opt/amnesia/docker-compose.yml",
 ] as const;
 
-const KNOWN_AWG0_CONF = [
-  "/opt/amnezia/awg/awg0.conf",
-  "/opt/amnesia/awg/awg0.conf",
-] as const;
+/** awg0.conf, wg0.conf, awg1.conf, … */
+const WG_IFACE_CONF_RE = /\/((?:awg|wg)\d+)\.conf$/i;
+
+const KNOWN_AWG_DIRS = ["/opt/amnezia/awg", "/opt/amnesia/awg"] as const;
 
 const FIND_ROOTS = "/opt /root /home /srv /var/lib";
+
+function isWgIfaceConfPath(p: string): boolean {
+  return WG_IFACE_CONF_RE.test(p);
+}
+
+function awgDirFromConfPath(confPath: string): string | null {
+  if (!isWgIfaceConfPath(confPath)) return null;
+  return safePathOrNull(parentDir(confPath));
+}
 
 function trimErr(s: string, max = 200): string {
   const t = s.trim();
@@ -44,7 +53,8 @@ function isWgRelatedMountDest(dest: string): boolean {
 
 function awgDirFromMountSource(src: string, dest: string): string | null {
   const s = src.replace(/\/+$/, "");
-  if (s.endsWith("/awg0.conf") || s.endsWith("awg0.conf")) return parentDir(s);
+  const fromConf = awgDirFromConfPath(s);
+  if (fromConf) return fromConf;
   if (s.endsWith("/awg") || /\/awg$/i.test(s)) return s;
   if (isWgRelatedMountDest(dest)) return s;
   return null;
@@ -156,7 +166,7 @@ async function discoverPathsViaFind(auth: SshAuth): Promise<{
   composePaths: string[];
   awgDirs: string[];
 }> {
-  const script = `find ${FIND_ROOTS} -maxdepth 7 \\( -name 'docker-compose.y*ml' -o -name 'compose.y*ml' -o -name 'awg0.conf' \\) 2>/dev/null | head -30`;
+  const script = `find ${FIND_ROOTS} -maxdepth 7 \\( -name 'docker-compose.y*ml' -o -name 'compose.y*ml' -o -name 'awg*.conf' -o -name 'wg*.conf' \\) 2>/dev/null | head -40`;
   const r = await execRemote(auth, `bash -lc ${shellQuote(script)}`);
   if (r.code !== 0) return { composePaths: [], awgDirs: [] };
   const composePaths: string[] = [];
@@ -166,9 +176,9 @@ async function discoverPathsViaFind(auth: SshAuth): Promise<{
     if (!p) continue;
     const safe = safePathOrNull(p);
     if (!safe) continue;
-    if (safe.endsWith("awg0.conf")) {
-      const dir = safePathOrNull(parentDir(safe));
-      if (dir) awgDirs.push(dir);
+    const dir = awgDirFromConfPath(safe);
+    if (dir) {
+      awgDirs.push(dir);
     } else if (/compose\.ya?ml$/i.test(safe)) {
       composePaths.push(safe);
     }
@@ -176,15 +186,65 @@ async function discoverPathsViaFind(auth: SshAuth): Promise<{
   return { composePaths, awgDirs };
 }
 
-async function discoverAwgDirFromKnownConf(auth: SshAuth): Promise<string | null> {
-  for (const conf of KNOWN_AWG0_CONF) {
-    const r = await execRemote(auth, `test -f ${shellQuote(conf)} && echo ok`);
-    if (r.stdout.includes("ok")) {
-      const dir = safePathOrNull(parentDir(conf));
-      if (dir) return dir;
+function scoreConfPath(p: string, preferIface?: string): number {
+  const m = WG_IFACE_CONF_RE.exec(p);
+  const iface = m?.[1]?.toLowerCase() ?? "";
+  let s = 0;
+  if (preferIface && iface === preferIface.toLowerCase()) s += 50;
+  if (iface.startsWith("awg")) s += 10;
+  if (p.includes("/opt/amnezia/") || p.includes("/opt/amnesia/")) s += 5;
+  return s;
+}
+
+/** Список awgN.conf / wgN.conf в типичных каталогах на хосте. */
+async function discoverWgConfPathsOnHost(
+  auth: SshAuth,
+  preferIface?: string,
+): Promise<string[]> {
+  const dirs = KNOWN_AWG_DIRS.map((d) => shellQuote(d)).join(" ");
+  const script = `set -eu
+for d in ${dirs}; do
+  [ -d "$d" ] || continue
+  for f in "$d"/awg*.conf "$d"/wg*.conf; do
+    [ -f "$f" ] || continue
+    echo "$f"
+  done
+done`;
+  const r = await execRemote(auth, `bash -lc ${shellQuote(script)}`);
+  const paths: string[] = [];
+  for (const line of r.stdout.split("\n")) {
+    const p = line.trim();
+    if (!p || !isWgIfaceConfPath(p)) continue;
+    const safe = safePathOrNull(p);
+    if (safe) paths.push(safe);
+  }
+  if (preferIface?.trim()) {
+    for (const base of KNOWN_AWG_DIRS) {
+      const guess = `${base}/${preferIface.trim()}.conf`;
+      const safe = safePathOrNull(guess);
+      if (safe && !paths.includes(safe)) {
+        const t = await execRemote(auth, `test -f ${shellQuote(safe)} && echo ok`);
+        if (t.stdout.includes("ok")) paths.unshift(safe);
+      }
     }
   }
+  return [...paths].sort((a, b) => scoreConfPath(b, preferIface) - scoreConfPath(a, preferIface));
+}
+
+async function discoverAwgDirFromKnownConf(
+  auth: SshAuth,
+  preferIface?: string,
+): Promise<string | null> {
+  for (const conf of await discoverWgConfPathsOnHost(auth, preferIface)) {
+    const dir = awgDirFromConfPath(conf);
+    if (dir) return dir;
+  }
   const { awgDirs } = await discoverPathsViaFind(auth);
+  if (preferIface) {
+    const iface = preferIface.toLowerCase();
+    const preferred = awgDirs.find((d) => d.toLowerCase().endsWith(`/${iface}.conf`) || d.includes(`/${iface}/`));
+    if (preferred) return preferred;
+  }
   return awgDirs[0] ?? null;
 }
 
@@ -233,6 +293,7 @@ export async function discoverComposeOnReferenceServer(reference: ServerRow): Pr
   awgDir: string;
 }> {
   const auth = buildSshAuthFromServer(reference);
+  const preferIface = reference.wg_interface?.trim() || undefined;
   let container = reference.docker_wg_container?.trim() || "";
   let awgFromMount = container ? await discoverAwgDirFromContainer(auth, container) : null;
   let imageFromDocker = "";
@@ -247,7 +308,7 @@ export async function discoverComposeOnReferenceServer(reference: ServerRow): Pr
   }
 
   if (!awgFromMount) {
-    awgFromMount = await discoverAwgDirFromKnownConf(auth);
+    awgFromMount = await discoverAwgDirFromKnownConf(auth, preferIface);
   }
 
   if (!container || !imageFromDocker) {
@@ -300,7 +361,7 @@ export async function discoverComposeOnReferenceServer(reference: ServerRow): Pr
   }
 
   const awgDir =
-    awgFromMount ?? found.awgDirs[0] ?? (await discoverAwgDirFromKnownConf(auth));
+    awgFromMount ?? found.awgDirs[0] ?? (await discoverAwgDirFromKnownConf(auth, preferIface));
   if (awgDir && container && imageFromDocker && SAFE_CONTAINER.test(container)) {
     return synthesizeFromHost(container, awgDir, imageFromDocker);
   }
