@@ -534,7 +534,6 @@ function ProvisionServerForm(props: {
   const [sshKey, setSshKey] = useState("");
   const [sshPassword, setSshPassword] = useState("");
   const [templateServerId, setTemplateServerId] = useState("");
-  const [endpointHost, setEndpointHost] = useState("");
   const [vlessJson, setVlessJson] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [steps, setSteps] = useState<ProvisionStep[]>([]);
@@ -568,7 +567,6 @@ function ProvisionServerForm(props: {
           sshUser: "root",
           sshPrivateKey: sshKey,
           sshPassword,
-          endpointHost: endpointHost.trim() || undefined,
           templateServerId: templateServerId.trim() || undefined,
           vlessReality,
         });
@@ -687,15 +685,12 @@ function ProvisionServerForm(props: {
         </p>
       </div>
       <div className="field">
-        <label>SSH host (новый VPS)</label>
-        <input value={sshHost} onChange={(e) => setSshHost(e.target.value)} required />
-      </div>
-      <div className="field">
-        <label>Endpoint (IP нового VPS)</label>
+        <label>IP / host нового VPS</label>
         <input
-          value={endpointHost}
-          onChange={(e) => setEndpointHost(e.target.value)}
-          placeholder="по умолчанию = SSH host"
+          value={sshHost}
+          onChange={(e) => setSshHost(e.target.value)}
+          placeholder="публичный IP — для SSH и для клиентов"
+          required
         />
       </div>
       <div className="field">
