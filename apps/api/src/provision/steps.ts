@@ -8,8 +8,8 @@ import {
 } from "../ssh/client.js";
 import type { SshAuth } from "../ssh/client.js";
 import { AMNEZIA_WG_IMAGE } from "./compose.js";
-import { resolvePullableDockerImage } from "./dockerImage.js";
-import { type AwgHostLayout, DEFAULT_AWG_LAYOUT, extractImageFromCompose } from "./layout.js";
+import { normalizeProvisionComposeYaml } from "./dockerImage.js";
+import { type AwgHostLayout, DEFAULT_AWG_LAYOUT } from "./layout.js";
 import { PANEL_WG_NAT_SCRIPT_BASENAME } from "./panelNatScript.js";
 
 export type StepResult = { ok: true; detail?: string } | { ok: false; message: string };
@@ -86,14 +86,10 @@ export async function stepPrepareNewServerHost(
     return { ok: false, message: "Некорректный listenPort" };
   }
   const port = String(listenPort);
-  const rawExtracted =
-    (composeYaml && extractImageFromCompose(composeYaml)) || AMNEZIA_WG_IMAGE;
-  const image = resolvePullableDockerImage(rawExtracted, {
-    containerName: layout.containerName,
-  });
-  const pullImage =
-    image.includes("/") || image.includes("@sha256:") ? image : AMNEZIA_WG_IMAGE;
+  /** На новом VPS всегда пин с Hub; локальный тег образца (amnezia-awg2) не pull'ится. */
+  const pullImage = AMNEZIA_WG_IMAGE;
   const script = `set -euo pipefail
+rm -f ${shellQuote(layout.composePath)}
 if [ -f ${shellQuote(layout.composePath)} ]; then
   docker compose -f ${shellQuote(layout.composePath)} down --remove-orphans 2>/dev/null || true
 fi
@@ -109,7 +105,7 @@ fi
   if (r.code !== 0) {
     return { ok: false, message: `Подготовка хоста: ${trimCmdOut(r.stderr || r.stdout)}` };
   }
-  return { ok: true, detail: "Образ загружен, конфликты сняты" };
+  return { ok: true, detail: `Образ загружен (${pullImage.split("@")[0]})` };
 }
 
 export async function stepEnableIpv4Forward(auth: SshAuth): Promise<StepResult> {
@@ -129,7 +125,10 @@ export async function stepWriteProvisionFiles(
   natScript: string,
   layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
 ): Promise<StepResult> {
-  const b64Compose = Buffer.from(composeYaml, "utf8").toString("base64");
+  const normalizedCompose = normalizeProvisionComposeYaml(composeYaml, {
+    containerName: layout.containerName,
+  });
+  const b64Compose = Buffer.from(normalizedCompose, "utf8").toString("base64");
   const b64Conf = Buffer.from(awg0Conf, "utf8").toString("base64");
   const b64Nat = Buffer.from(natScript, "utf8").toString("base64");
   const natHostPath = `${layout.awgDir}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
@@ -154,17 +153,10 @@ export async function stepDockerComposeUp(
   layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
   opts?: { forceRecreate?: boolean },
 ): Promise<StepResult> {
-  const pull = await execRemote(
-    auth,
-    `docker compose -f ${shellQuote(layout.composePath)} pull`,
-  );
-  if (pull.code !== 0) {
-    return { ok: false, message: `docker compose pull: ${trimCmdOut(pull.stderr || pull.stdout)}` };
-  }
   const flags = opts?.forceRecreate ? " --force-recreate" : "";
   const r = await execRemote(
     auth,
-    `docker compose -f ${shellQuote(layout.composePath)} up -d --pull always${flags}`,
+    `docker compose -f ${shellQuote(layout.composePath)} up -d${flags}`,
   );
   if (r.code !== 0) {
     return { ok: false, message: `docker compose up: ${trimCmdOut(r.stderr || r.stdout)}` };
@@ -179,7 +171,10 @@ export async function stepWriteProvisionSidecars(
   natScript: string,
   layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
 ): Promise<StepResult> {
-  const b64Compose = Buffer.from(composeYaml, "utf8").toString("base64");
+  const normalizedCompose = normalizeProvisionComposeYaml(composeYaml, {
+    containerName: layout.containerName,
+  });
+  const b64Compose = Buffer.from(normalizedCompose, "utf8").toString("base64");
   const b64Nat = Buffer.from(natScript, "utf8").toString("base64");
   const natHostPath = `${layout.awgDir}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
   const script = `set -euo pipefail

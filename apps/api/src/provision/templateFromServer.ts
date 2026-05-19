@@ -3,6 +3,7 @@ import { execRemote, shellQuote } from "../ssh/client.js";
 import { buildSshAuthFromServer } from "../ssh/buildAuth.js";
 import { discoverComposeOnReferenceServer } from "./discoverHostLayout.js";
 import { normalizeProvisionComposeYaml } from "./dockerImage.js";
+import { PROVISION_AWG_DIR, PROVISION_COMPOSE_PATH, PROVISION_CONTAINER_NAME } from "./compose.js";
 import { type AwgHostLayout, parseAwgLayoutFromCompose } from "./layout.js";
 import { buildPanelWgNatScript } from "./panelNatScript.js";
 import { PANEL_WG_NAT_SCRIPT_BASENAME } from "./panelNatScript.js";
@@ -25,11 +26,12 @@ export async function fetchAwgDeployBundleFromServer(reference: ServerRow): Prom
   const { composePath, composeYaml: rawCompose, awgDir } = await discoverComposeOnReferenceServer(reference);
   const containerHint = reference.docker_wg_container?.trim() || undefined;
   const composeYaml = normalizeProvisionComposeYaml(rawCompose, { containerName: containerHint });
+  /** На целевом VPS — стандартные пути/имя контейнера панели, не копия имени с образца (amnezia-awg2). */
   const layout = parseAwgLayoutFromCompose(composeYaml, {
-    composePath,
-    containerName: reference.docker_wg_container?.trim() || undefined,
-    awgDir,
-    composeServiceName: reference.compose_service_name?.trim() || undefined,
+    composePath: PROVISION_COMPOSE_PATH,
+    containerName: PROVISION_CONTAINER_NAME,
+    awgDir: PROVISION_AWG_DIR,
+    composeServiceName: PROVISION_CONTAINER_NAME,
   });
 
   const natPath = `${layout.awgDir}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
