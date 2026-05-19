@@ -7,11 +7,8 @@ import {
   shellQuote,
 } from "../ssh/client.js";
 import type { SshAuth } from "../ssh/client.js";
-import {
-  PROVISION_AWG_CONF,
-  PROVISION_COMPOSE_PATH,
-  PROVISION_AWG_DIR,
-} from "./compose.js";
+import { AMNEZIA_WG_IMAGE } from "./compose.js";
+import { type AwgHostLayout, DEFAULT_AWG_LAYOUT, extractImageFromCompose } from "./layout.js";
 import { PANEL_WG_NAT_SCRIPT_BASENAME } from "./panelNatScript.js";
 
 export type StepResult = { ok: true; detail?: string } | { ok: false; message: string };
@@ -61,6 +58,53 @@ docker compose version
   return { ok: true, detail: "Docker установлен" };
 }
 
+/** Есть ли готовый к работе AWG (конфиг + контейнер) на целевом VPS. */
+export async function panelAwgProvisionReady(
+  auth: SshAuth,
+  layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
+): Promise<boolean> {
+  const conf = await execRemote(auth, `test -f ${shellQuote(layout.awgConfPath)} && echo ok`);
+  if (!conf.stdout.includes("ok")) return false;
+  const st = await execRemote(
+    auth,
+    `docker inspect ${shellQuote(layout.containerName)} --format '{{.State.Running}}' 2>/dev/null`,
+  );
+  return st.stdout.trim() === "true";
+}
+
+/**
+ * Подготовка чистого/нового VPS: снять конфликтующие контейнеры, pull образа, открыть UDP в UFW.
+ */
+export async function stepPrepareNewServerHost(
+  auth: SshAuth,
+  listenPort: number,
+  layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
+  composeYaml?: string,
+): Promise<StepResult> {
+  if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
+    return { ok: false, message: "Некорректный listenPort" };
+  }
+  const port = String(listenPort);
+  const image = (composeYaml && extractImageFromCompose(composeYaml)) || AMNEZIA_WG_IMAGE;
+  const script = `set -euo pipefail
+if [ -f ${shellQuote(layout.composePath)} ]; then
+  docker compose -f ${shellQuote(layout.composePath)} down --remove-orphans 2>/dev/null || true
+fi
+for c in ${layout.containerName} amnezia-wireguard amnezia-awg2 amnezia-awg; do
+  docker rm -f "$c" 2>/dev/null || true
+done
+docker pull ${shellQuote(image)}
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qiE 'Status: active|статус: активен'; then
+  ufw allow ${port}/udp comment 'amnesia-veb awg' >/dev/null 2>&1 || ufw allow ${port}/udp >/dev/null 2>&1 || true
+fi
+`;
+  const r = await execRemote(auth, `bash -lc ${shellQuote(script)}`);
+  if (r.code !== 0) {
+    return { ok: false, message: `Подготовка хоста: ${trimCmdOut(r.stderr || r.stdout)}` };
+  }
+  return { ok: true, detail: "Образ загружен, конфликты сняты" };
+}
+
 export async function stepEnableIpv4Forward(auth: SshAuth): Promise<StepResult> {
   const script = `set -e
 sysctl -w net.ipv4.ip_forward=1
@@ -76,17 +120,18 @@ export async function stepWriteProvisionFiles(
   composeYaml: string,
   awg0Conf: string,
   natScript: string,
+  layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
 ): Promise<StepResult> {
   const b64Compose = Buffer.from(composeYaml, "utf8").toString("base64");
   const b64Conf = Buffer.from(awg0Conf, "utf8").toString("base64");
   const b64Nat = Buffer.from(natScript, "utf8").toString("base64");
-  const natHostPath = `${PROVISION_AWG_DIR}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
+  const natHostPath = `${layout.awgDir}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
   const script = `set -euo pipefail
-install -d -m 755 ${PROVISION_AWG_DIR}
-echo ${shellQuote(b64Compose)} | base64 -d > ${PROVISION_COMPOSE_PATH}
-chmod 644 ${PROVISION_COMPOSE_PATH}
-echo ${shellQuote(b64Conf)} | base64 -d > ${PROVISION_AWG_CONF}
-chmod 600 ${PROVISION_AWG_CONF}
+install -d -m 755 ${shellQuote(layout.awgDir)}
+echo ${shellQuote(b64Compose)} | base64 -d > ${shellQuote(layout.composePath)}
+chmod 644 ${shellQuote(layout.composePath)}
+echo ${shellQuote(b64Conf)} | base64 -d > ${shellQuote(layout.awgConfPath)}
+chmod 600 ${shellQuote(layout.awgConfPath)}
 echo ${shellQuote(b64Nat)} | base64 -d > ${shellQuote(natHostPath)}
 chmod 755 ${shellQuote(natHostPath)}
 `;
@@ -99,12 +144,20 @@ chmod 755 ${shellQuote(natHostPath)}
 
 export async function stepDockerComposeUp(
   auth: SshAuth,
+  layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
   opts?: { forceRecreate?: boolean },
 ): Promise<StepResult> {
+  const pull = await execRemote(
+    auth,
+    `docker compose -f ${shellQuote(layout.composePath)} pull`,
+  );
+  if (pull.code !== 0) {
+    return { ok: false, message: `docker compose pull: ${trimCmdOut(pull.stderr || pull.stdout)}` };
+  }
   const flags = opts?.forceRecreate ? " --force-recreate" : "";
   const r = await execRemote(
     auth,
-    `docker compose -f ${shellQuote(PROVISION_COMPOSE_PATH)} up -d${flags}`,
+    `docker compose -f ${shellQuote(layout.composePath)} up -d --pull always${flags}`,
   );
   if (r.code !== 0) {
     return { ok: false, message: `docker compose up: ${trimCmdOut(r.stderr || r.stdout)}` };
@@ -117,14 +170,15 @@ export async function stepWriteProvisionSidecars(
   auth: SshAuth,
   composeYaml: string,
   natScript: string,
+  layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
 ): Promise<StepResult> {
   const b64Compose = Buffer.from(composeYaml, "utf8").toString("base64");
   const b64Nat = Buffer.from(natScript, "utf8").toString("base64");
-  const natHostPath = `${PROVISION_AWG_DIR}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
+  const natHostPath = `${layout.awgDir}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
   const script = `set -euo pipefail
-install -d -m 755 ${PROVISION_AWG_DIR}
-echo ${shellQuote(b64Compose)} | base64 -d > ${PROVISION_COMPOSE_PATH}
-chmod 644 ${PROVISION_COMPOSE_PATH}
+install -d -m 755 ${shellQuote(layout.awgDir)}
+echo ${shellQuote(b64Compose)} | base64 -d > ${shellQuote(layout.composePath)}
+chmod 644 ${shellQuote(layout.composePath)}
 echo ${shellQuote(b64Nat)} | base64 -d > ${shellQuote(natHostPath)}
 chmod 755 ${shellQuote(natHostPath)}
 `;

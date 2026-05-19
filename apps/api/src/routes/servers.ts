@@ -94,8 +94,8 @@ const serverProvision = z
     sshPrivateKey: z.string().max(65535).default(""),
     sshPassword: z.string().max(2048).default(""),
     endpointHost: z.string().min(1).max(255).optional(),
-    listenPort: z.coerce.number().int().min(1).max(65535).default(51820),
-    vpnSubnetCidr: z.string().regex(/^\d+\.\d+\.\d+\.\d+\/24$/).default("10.8.0.0/24"),
+    /** Рабочий сервер в панели: docker-compose и panel-nat копируются с него по SSH. */
+    templateServerId: z.string().uuid().optional(),
     vlessReality: vlessRealityShape,
   })
   .superRefine((b, ctx) => {
@@ -141,8 +141,7 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
       sshPrivateKey: b.sshPrivateKey,
       sshPassword: b.sshPassword,
       endpointHost,
-      listenPort: b.listenPort,
-      vpnSubnetCidr: b.vpnSubnetCidr,
+      templateServerId: b.templateServerId,
       vlessReality: b.vlessReality,
     };
 

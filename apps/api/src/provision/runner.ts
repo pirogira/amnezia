@@ -1,20 +1,20 @@
 import type { FastifyBaseLogger } from "fastify";
 import { writeAudit } from "../audit.js";
+import { getDb } from "../db.js";
+import type { ServerRow } from "../drivers/types.js";
 import { insertVpnServerRecord, type VpnServerInsertInput } from "../services/vpnServerInsert.js";
 import {
-  dockerContainerExists,
   dockerDetectIfaceSlash24Prefix,
   dockerResolveWgIface,
 } from "../ssh/client.js";
 import type { SshAuth } from "../ssh/client.js";
-import {
-  buildProvisionComposeYaml,
-  PROVISION_COMPOSE_PATH,
-  PROVISION_CONTAINER_NAME,
-} from "./compose.js";
+import { buildProvisionComposeYaml } from "./compose.js";
+import { type AwgHostLayout, DEFAULT_AWG_LAYOUT } from "./layout.js";
 import { generateAwgObfuscationParams, generateWgServerKeypair } from "./keys.js";
 import { buildPanelWgNatScript } from "./panelNatScript.js";
 import { buildAwg0ServerConf } from "./serverConf.js";
+import { allocateProvisionNetwork } from "./allocateNetwork.js";
+import { fetchAwgDeployBundleFromServer } from "./templateFromServer.js";
 import {
   type StepResult,
   stepDetectUbuntu,
@@ -24,6 +24,8 @@ import {
   stepWaitWgShow,
   stepWriteProvisionFiles,
   stepWriteProvisionSidecars,
+  stepPrepareNewServerHost,
+  panelAwgProvisionReady,
 } from "./steps.js";
 
 export type ProvisionFormInput = {
@@ -34,15 +36,21 @@ export type ProvisionFormInput = {
   sshPrivateKey: string;
   sshPassword: string;
   endpointHost: string;
-  listenPort: number;
-  vpnSubnetCidr: string;
+  /** Заполняются в runner через allocateProvisionNetwork(). */
+  listenPort?: number;
+  vpnSubnetCidr?: string;
+  /** Рабочий сервер в панели: с него копируются docker-compose и panel-nat (ключи — новые). */
+  templateServerId?: string;
   vlessReality?: VpnServerInsertInput["vlessReality"];
 };
 
 const STEP_LABELS: Record<string, string> = {
   detect_os: "Проверка ОС (Ubuntu 22.04 / 24.04)",
+  allocate_network: "Подбор свободной подсети и UDP-порта",
+  fetch_template: "Копирование Docker-шаблона с сервера-образца",
   probe_container: "Проверка контейнера amnezia-awg",
   ensure_docker: "Установка Docker (при необходимости)",
+  prepare_host: "Подготовка VPS (образ, firewall, конфликты)",
   ip_forward: "Включение IPv4 forwarding",
   write_files: "Запись awg0.conf и docker-compose",
   write_sidecars: "Обновление docker-compose и panel-nat",
@@ -91,7 +99,12 @@ function auditStep(adminId: string, step: string, r: StepResult): void {
   });
 }
 
-function baseInsert(input: ProvisionFormInput, vpnSubnetCidr: string, wgInterface: string): VpnServerInsertInput {
+function baseInsert(
+  input: ProvisionFormInput,
+  vpnSubnetCidr: string,
+  wgInterface: string,
+  layout: AwgHostLayout,
+): VpnServerInsertInput {
   return {
     name: input.name,
     sshHost: input.sshHost,
@@ -99,13 +112,13 @@ function baseInsert(input: ProvisionFormInput, vpnSubnetCidr: string, wgInterfac
     sshUser: input.sshUser,
     sshPrivateKey: input.sshPrivateKey,
     sshPassword: input.sshPassword,
-    dockerWgContainer: PROVISION_CONTAINER_NAME,
+    dockerWgContainer: layout.containerName,
     wgInterface,
     vpnSubnetCidr,
     endpointHost: input.endpointHost,
-    listenPort: input.listenPort,
-    dockerComposePath: PROVISION_COMPOSE_PATH,
-    composeServiceName: PROVISION_CONTAINER_NAME,
+    listenPort: provisionNetwork(input).listenPort,
+    dockerComposePath: layout.composePath,
+    composeServiceName: layout.composeServiceName,
     portChangeHookCmd: null,
     driverMode: "ssh",
     vlessReality: input.vlessReality,
@@ -116,6 +129,13 @@ function stepMessage(r: StepResult): string | undefined {
   if (!r.ok && "message" in r) return r.message;
   if (r.ok && "detail" in r && r.detail) return r.detail;
   return undefined;
+}
+
+function provisionNetwork(input: ProvisionFormInput): { listenPort: number; vpnSubnetCidr: string } {
+  if (input.listenPort == null || !input.vpnSubnetCidr) {
+    throw new Error("Внутренняя ошибка: сеть не выделена");
+  }
+  return { listenPort: input.listenPort, vpnSubnetCidr: input.vpnSubnetCidr };
 }
 
 export async function runProvisionAmneziaAwg(
@@ -229,33 +249,73 @@ export async function runProvisionAmneziaAwg(
     return { ok: false, steps, message: dr.message };
   }
 
-  const exists = await dockerContainerExists(auth, PROVISION_CONTAINER_NAME);
-  /** Reuse-ветка: +1 шаг `ip_forward` после сноса sysctl / VPS. */
-  totalSteps = exists ? 8 : 7;
-  emit?.({
-    event: "plan",
-    totalSteps,
-    reusedContainer: exists,
-    message: exists
-      ? "Контейнер уже есть — обновим compose/NAT и пересоздадим сервис."
-      : "Полная установка Docker и контейнера.",
-  });
-  log?.info({ totalSteps, reusedContainer: exists }, "provision_plan");
+  let layout: AwgHostLayout = DEFAULT_AWG_LAYOUT;
+  let composeYaml = buildProvisionComposeYaml();
+  let natScript = buildPanelWgNatScript();
+  const withTemplate = Boolean(input.templateServerId?.trim());
+
   emit?.({
     event: "step_end",
     step: "detect_os",
     label: STEP_LABELS.detect_os,
     index: 1,
-    total: totalSteps,
+    total: 8,
     ok: true,
     durationMs: detectMs,
     message: stepMessage(dr),
-    pct: Math.round(100 / totalSteps),
+    pct: 12,
   });
 
   stepIndex = 1;
 
-  if (exists) {
+  dr = await runStep("allocate_network", async () => {
+    try {
+      const net = allocateProvisionNetwork();
+      input.listenPort = net.listenPort;
+      input.vpnSubnetCidr = net.vpnSubnetCidr;
+      return { ok: true, detail: `порт ${net.listenPort}, подсеть ${net.vpnSubnetCidr}` };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ok: false, message: msg };
+    }
+  });
+  if (!dr.ok) return { ok: false, steps, message: dr.message };
+
+  if (withTemplate) {
+    dr = await runStep("fetch_template", async () => {
+      try {
+        const ref = getDb()
+          .prepare(`SELECT * FROM vpn_servers WHERE id = ?`)
+          .get(input.templateServerId!.trim()) as ServerRow | undefined;
+        if (!ref) return { ok: false, message: "Сервер-образец не найден в панели" };
+        const bundle = await fetchAwgDeployBundleFromServer(ref);
+        layout = bundle.layout;
+        composeYaml = bundle.composeYaml;
+        natScript = bundle.natScript;
+        return { ok: true, detail: `Образец: ${ref.name}` };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { ok: false, message: msg };
+      }
+    });
+    if (!dr.ok) return { ok: false, steps, message: dr.message };
+  }
+
+  const reuseExisting = await panelAwgProvisionReady(auth, layout);
+  totalSteps = reuseExisting ? (withTemplate ? 11 : 10) : withTemplate ? 10 : 9;
+  emit?.({
+    event: "plan",
+    totalSteps,
+    reusedContainer: reuseExisting,
+    message: reuseExisting
+      ? "Контейнер и awg0.conf уже есть — обновим compose/NAT и пересоздадим сервис."
+      : withTemplate
+        ? `Установка на новый VPS (порт ${input.listenPort}, ${input.vpnSubnetCidr}): Docker как на образце.`
+        : `Полная установка AmneziaWG (порт ${input.listenPort}, ${input.vpnSubnetCidr}).`,
+  });
+  log?.info({ totalSteps, reusedContainer: reuseExisting }, "provision_plan");
+
+  if (reuseExisting) {
     dr = await runStep("probe_container", async () => ({
       ok: true,
       detail: "Используется существующий amnezia-awg",
@@ -265,19 +325,22 @@ export async function runProvisionAmneziaAwg(
     dr = await runStep("ip_forward", () => stepEnableIpv4Forward(auth));
     if (!dr.ok) return { ok: false, steps, message: dr.message };
 
-    const composeYamlReuse = buildProvisionComposeYaml();
-    const natScriptReuse = buildPanelWgNatScript();
-    dr = await runStep("write_sidecars", () =>
-      stepWriteProvisionSidecars(auth, composeYamlReuse, natScriptReuse),
+    dr = await runStep("prepare_host", () =>
+      stepPrepareNewServerHost(auth, provisionNetwork(input).listenPort, layout, composeYaml),
     );
     if (!dr.ok) return { ok: false, steps, message: dr.message };
 
-    dr = await runStep("compose_up", () => stepDockerComposeUp(auth, { forceRecreate: true }));
+    dr = await runStep("write_sidecars", () =>
+      stepWriteProvisionSidecars(auth, composeYaml, natScript, layout),
+    );
+    if (!dr.ok) return { ok: false, steps, message: dr.message };
+
+    dr = await runStep("compose_up", () => stepDockerComposeUp(auth, layout, { forceRecreate: true }));
     if (!dr.ok) return { ok: false, steps, message: dr.message };
 
     dr = await runStep("resolve_iface", async () => {
       try {
-        const iface = await dockerResolveWgIface(auth, PROVISION_CONTAINER_NAME, "awg0");
+        const iface = await dockerResolveWgIface(auth, layout.containerName, "awg0");
         return { ok: true, detail: iface };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -290,12 +353,12 @@ export async function runProvisionAmneziaAwg(
     const iface = ifaceRow?.message ?? "awg0";
 
     dr = await runStep("wait_wg", () =>
-      withWaitWgPulse(() => stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, iface)),
+      withWaitWgPulse(() => stepWaitWgShow(auth, layout.containerName, iface)),
     );
     if (!dr.ok) return { ok: false, steps, message: dr.message };
 
-    const prefix = await dockerDetectIfaceSlash24Prefix(auth, PROVISION_CONTAINER_NAME, iface);
-    const cidr = prefix ? `${prefix}.0/24` : input.vpnSubnetCidr;
+    const prefix = await dockerDetectIfaceSlash24Prefix(auth, layout.containerName, iface);
+    const cidr = prefix ? `${prefix}.0/24` : provisionNetwork(input).vpnSubnetCidr;
 
     let serverId: string;
     const saveStart = Date.now();
@@ -309,7 +372,7 @@ export async function runProvisionAmneziaAwg(
       pct: Math.round((100 * (stepIndex - 1)) / totalSteps),
     });
     try {
-      serverId = insertVpnServerRecord(adminId, baseInsert(input, cidr, iface));
+      serverId = insertVpnServerRecord(adminId, baseInsert(input, cidr, iface, layout));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const fail: StepResult = { ok: false, message: msg };
@@ -351,14 +414,19 @@ export async function runProvisionAmneziaAwg(
   dr = await runStep("ip_forward", () => stepEnableIpv4Forward(auth));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
 
+  dr = await runStep("prepare_host", () =>
+    stepPrepareNewServerHost(auth, provisionNetwork(input).listenPort, layout, composeYaml),
+  );
+  if (!dr.ok) return { ok: false, steps, message: dr.message };
+
   const { privateKey } = generateWgServerKeypair();
   const awgParams = generateAwgObfuscationParams();
   let awg0Conf: string;
   try {
     awg0Conf = buildAwg0ServerConf({
       serverPrivateKey: privateKey,
-      vpnSubnetCidr: input.vpnSubnetCidr,
-      listenPort: input.listenPort,
+      vpnSubnetCidr: provisionNetwork(input).vpnSubnetCidr,
+      listenPort: provisionNetwork(input).listenPort,
       awgParams,
       omitPostUp: false,
     });
@@ -366,17 +434,16 @@ export async function runProvisionAmneziaAwg(
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, steps, message: msg };
   }
-  const composeYaml = buildProvisionComposeYaml();
-  const natScript = buildPanelWgNatScript();
-
-  dr = await runStep("write_files", () => stepWriteProvisionFiles(auth, composeYaml, awg0Conf, natScript));
+  dr = await runStep("write_files", () =>
+    stepWriteProvisionFiles(auth, composeYaml, awg0Conf, natScript, layout),
+  );
   if (!dr.ok) return { ok: false, steps, message: dr.message };
 
-  dr = await runStep("compose_up", () => stepDockerComposeUp(auth));
+  dr = await runStep("compose_up", () => stepDockerComposeUp(auth, layout));
   if (!dr.ok) return { ok: false, steps, message: dr.message };
 
   dr = await runStep("wait_wg", () =>
-    withWaitWgPulse(() => stepWaitWgShow(auth, PROVISION_CONTAINER_NAME, "awg0")),
+    withWaitWgPulse(() => stepWaitWgShow(auth, layout.containerName, "awg0")),
   );
   if (!dr.ok) return { ok: false, steps, message: dr.message };
   const wgIfaceNew = dr.ok && dr.detail ? dr.detail : "awg0";
@@ -393,7 +460,10 @@ export async function runProvisionAmneziaAwg(
     pct: Math.round((100 * (stepIndex - 1)) / totalSteps),
   });
   try {
-    serverId = insertVpnServerRecord(adminId, baseInsert(input, input.vpnSubnetCidr, wgIfaceNew));
+    serverId = insertVpnServerRecord(
+      adminId,
+      baseInsert(input, provisionNetwork(input).vpnSubnetCidr, wgIfaceNew, layout),
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const fail: StepResult = { ok: false, message: msg };

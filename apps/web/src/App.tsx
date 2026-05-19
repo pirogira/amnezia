@@ -199,6 +199,7 @@ export function App() {
           />
         ) : (
           <ProvisionServerForm
+            templateServers={servers}
             onCreated={async () => {
               const list = await api<Server[]>("/api/servers");
               setServers(list);
@@ -523,12 +524,17 @@ type ProvisionStep = {
   durationMs?: number;
 };
 
-function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
+function ProvisionServerForm(props: {
+  templateServers: Server[];
+  onCreated: () => Promise<void>;
+}) {
   const [name, setName] = useState("New VPS");
   const [sshHost, setSshHost] = useState("");
   const [sshPort, setSshPort] = useState(22);
   const [sshKey, setSshKey] = useState("");
   const [sshPassword, setSshPassword] = useState("");
+  const [templateServerId, setTemplateServerId] = useState("");
+  const [endpointHost, setEndpointHost] = useState("");
   const [vlessJson, setVlessJson] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [steps, setSteps] = useState<ProvisionStep[]>([]);
@@ -562,6 +568,8 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
           sshUser: "root",
           sshPrivateKey: sshKey,
           sshPassword,
+          endpointHost: endpointHost.trim() || undefined,
+          templateServerId: templateServerId.trim() || undefined,
           vlessReality,
         });
         setBusy(true);
@@ -660,9 +668,35 @@ function ProvisionServerForm(props: { onCreated: () => Promise<void> }) {
         <label>Имя</label>
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </div>
+      <div className="field" style={{ flex: "1 1 100%" }}>
+        <label>Сервер-образец (рабочий Docker)</label>
+        <select
+          value={templateServerId}
+          onChange={(e) => setTemplateServerId(e.target.value)}
+          required
+        >
+          <option value="">— выберите —</option>
+          {props.templateServers.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.endpointHost}:{s.listenPort})
+            </option>
+          ))}
+        </select>
+        <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+          docker-compose и panel-nat с образца; подсеть и UDP-порт подберёт панель.
+        </p>
+      </div>
       <div className="field">
-        <label>SSH host</label>
+        <label>SSH host (новый VPS)</label>
         <input value={sshHost} onChange={(e) => setSshHost(e.target.value)} required />
+      </div>
+      <div className="field">
+        <label>Endpoint (IP нового VPS)</label>
+        <input
+          value={endpointHost}
+          onChange={(e) => setEndpointHost(e.target.value)}
+          placeholder="по умолчанию = SSH host"
+        />
       </div>
       <div className="field">
         <label>SSH port</label>
