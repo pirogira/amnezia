@@ -256,6 +256,11 @@ export function App() {
       {servers.length > 0 && (
         <div className="card clients-card">
           <h2 className="h2">Клиенты</h2>
+          {err && (
+            <p className="error" style={{ margin: "0.5rem 0 0" }}>
+              {err}
+            </p>
+          )}
           <div className="active-server-block">
             <label className="active-server-label" htmlFor="active-server-select">
               Активный сервер
@@ -347,21 +352,21 @@ export function App() {
                             </button>
                           </>
                         )}{" "}
-                        {!c.revoked_at && (
-                          <button
-                            className="btn danger"
-                            type="button"
-                            onClick={async () => {
+                        <button
+                          className="btn danger"
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              setErr(null);
                               await api(`/api/clients/${c.id}`, { method: "DELETE" });
-                              const list = await api<ClientRow[]>(
-                                `/api/servers/${activeServer.id}/clients`,
-                              );
-                              setClients(list);
-                            }}
-                          >
-                            Отозвать
-                          </button>
-                        )}
+                              setClients((prev) => prev.filter((row) => row.id !== c.id));
+                            } catch (e) {
+                              setErr(e instanceof Error ? e.message : "Не удалось отозвать клиента");
+                            }
+                          }}
+                        >
+                          Отозвать
+                        </button>
                       </td>
                     </tr>
                   ))}

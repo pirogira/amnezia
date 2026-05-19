@@ -48,7 +48,7 @@ export async function clientRoutes(app: FastifyInstance): Promise<void> {
       .prepare(
         `SELECT id, server_id, name, protocol, public_key, assigned_ip, listen_port, endpoint_host,
                 revoked_at, expires_at, created_at
-         FROM vpn_clients WHERE server_id = ? ORDER BY created_at DESC`,
+         FROM vpn_clients WHERE server_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`,
       )
       .all(serverId) as Record<string, unknown>[];
     return rows;
