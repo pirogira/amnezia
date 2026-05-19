@@ -3,9 +3,11 @@ import { buildSshAuthFromServer } from "../ssh/buildAuth.js";
 import { discoverWgDockerOnHost } from "../ssh/discoverWgDocker.js";
 import { execRemote, SAFE_CONTAINER, shellQuote, type SshAuth } from "../ssh/client.js";
 import {
+  AMNEZIA_WG_IMAGE,
   buildProvisionComposeYamlForHost,
   PROVISION_AWG_DIR,
   PROVISION_COMPOSE_PATH,
+  PROVISION_CONTAINER_NAME,
 } from "./compose.js";
 import { assertSafeContainerName, assertSafeHostPath } from "./layout.js";
 
@@ -68,12 +70,59 @@ function safePathOrNull(p: string): string | null {
   }
 }
 
-/** Каталог awg на хосте по bind-mount контейнера AWG. */
+async function inspectContainerImage(auth: SshAuth, containerName: string): Promise<string | null> {
+  if (!SAFE_CONTAINER.test(containerName)) return null;
+  const r = await execRemote(
+    auth,
+    `docker inspect ${shellQuote(containerName)} --format '{{.Config.Image}}' 2>/dev/null`,
+  );
+  if (r.code !== 0) return null;
+  const image = r.stdout.trim();
+  return image.length > 0 ? image : null;
+}
+
+async function containerExistsOnHost(auth: SshAuth, containerName: string): Promise<boolean> {
+  if (!SAFE_CONTAINER.test(containerName)) return false;
+  const r = await execRemote(
+    auth,
+    `docker inspect ${shellQuote(containerName)} --format '{{.Id}}' 2>/dev/null`,
+  );
+  return r.code === 0 && r.stdout.trim().length > 0;
+}
+
+/** Ищет awg/wg .conf в каталогах mount (в т.ч. docker volume _data). */
+async function discoverAwgDirFromVolumeMounts(
+  auth: SshAuth,
+  containerName: string,
+): Promise<string | null> {
+  if (!SAFE_CONTAINER.test(containerName)) return null;
+  const cmd = `docker inspect ${shellQuote(containerName)} --format '{{range .Mounts}}{{.Source}}{{"\\n"}}{{end}}' 2>/dev/null`;
+  const r = await execRemote(auth, cmd);
+  if (r.code !== 0 || !r.stdout.trim()) return null;
+  for (const src of r.stdout.split("\n")) {
+    const root = src.trim();
+    if (!root) continue;
+    const safeRoot = safePathOrNull(root);
+    if (!safeRoot) continue;
+    const probe = `shopt -s nullglob; for f in ${shellQuote(safeRoot)}/*.conf ${shellQuote(safeRoot)}/*/*.conf; do [ -f "$f" ] || continue; b=$(basename "$f"); echo "$b" | grep -Eq '^(awg|wg)[0-9]+\\.conf$' && echo "$f" && break; done`;
+    const hit = await execRemote(auth, `bash -lc ${shellQuote(probe)}`);
+    const conf = hit.stdout.trim().split("\n")[0]?.trim();
+    if (!conf) continue;
+    const dir = awgDirFromConfPath(conf);
+    if (dir) return dir;
+  }
+  return null;
+}
+
+/** Каталог awg на хосте по bind-mount / volume контейнера AWG. */
 export async function discoverAwgDirFromContainer(
   auth: SshAuth,
   containerName: string,
 ): Promise<string | null> {
   if (!SAFE_CONTAINER.test(containerName)) return null;
+  const fromVol = await discoverAwgDirFromVolumeMounts(auth, containerName);
+  if (fromVol) return fromVol;
+
   const cmd = `docker inspect ${shellQuote(containerName)} --format '{{range .Mounts}}{{println .Destination "|" .Source}}{{end}}' 2>/dev/null`;
   const r = await execRemote(auth, cmd);
   if (r.code !== 0 || !r.stdout.trim()) return null;
@@ -84,8 +133,10 @@ export async function discoverAwgDirFromContainer(
     if (sep < 0) continue;
     const dest = t.slice(0, sep).trim();
     const src = t.slice(sep + 1).trim();
-    if (!src || !isWgRelatedMountDest(dest)) continue;
-    const dir = awgDirFromMountSource(src, dest);
+    if (!src) continue;
+    const dir = isWgRelatedMountDest(dest)
+      ? awgDirFromMountSource(src, dest)
+      : awgDirFromConfPath(src) ?? (/\/(awg|wireguard|amneziawg)/i.test(src) ? safePathOrNull(src) : null);
     if (!dir) continue;
     const safe = safePathOrNull(dir);
     if (safe) return safe;
@@ -114,14 +165,9 @@ async function discoverAwgFromAnyContainer(
   const ordered = prefer && names.includes(prefer) ? [prefer, ...rest] : rest;
 
   for (const name of ordered) {
-    const awgDir = await discoverAwgDirFromContainer(auth, name);
-    if (!awgDir) continue;
-    const imgR = await execRemote(
-      auth,
-      `docker inspect ${shellQuote(name)} --format '{{.Config.Image}}' 2>/dev/null`,
-    );
-    const image = imgR.code === 0 ? imgR.stdout.trim() : "";
+    const image = await inspectContainerImage(auth, name);
     if (!image) continue;
+    const awgDir = (await discoverAwgDirFromContainer(auth, name)) ?? PROVISION_AWG_DIR;
     return { containerName: name, awgDir, image };
   }
   return null;
@@ -267,14 +313,14 @@ function preferComposePath(paths: string[]): string[] {
   return [...paths].sort((a, b) => score(b) - score(a));
 }
 
-function synthesizeFromHost(
-  containerName: string,
-  awgDir: string,
+/** Шаблон для нового VPS: стандартные пути панели + образ с образца. */
+function synthesizeForNewProvision(
   image: string,
+  containerName: string = PROVISION_CONTAINER_NAME,
+  awgDir: string = PROVISION_AWG_DIR,
 ): { composePath: string; composeYaml: string; awgDir: string } {
-  const composePath = `${parentDir(awgDir)}/docker-compose.yml`;
   return {
-    composePath,
+    composePath: PROVISION_COMPOSE_PATH,
     composeYaml: buildProvisionComposeYamlForHost({
       awgDir,
       containerName: assertSafeContainerName(containerName),
@@ -282,6 +328,26 @@ function synthesizeFromHost(
     }),
     awgDir,
   };
+}
+
+async function resolveReferenceContainer(
+  auth: SshAuth,
+  reference: ServerRow,
+): Promise<{ containerName: string; image: string } | null> {
+  const prefer = reference.docker_wg_container?.trim();
+  if (prefer && (await containerExistsOnHost(auth, prefer))) {
+    const image = (await inspectContainerImage(auth, prefer)) ?? AMNEZIA_WG_IMAGE;
+    return { containerName: prefer, image };
+  }
+  const disc = await discoverWgDockerOnHost(auth);
+  if (disc.ok) return { containerName: disc.dockerWgContainer, image: disc.image };
+  for (const name of await listDockerContainerNames(auth)) {
+    if (!/amnezia|awg|wireguard|wg/i.test(name)) continue;
+    if (!(await containerExistsOnHost(auth, name))) continue;
+    const image = await inspectContainerImage(auth, name);
+    if (image) return { containerName: name, image };
+  }
+  return null;
 }
 
 /**
@@ -322,12 +388,8 @@ export async function discoverComposeOnReferenceServer(reference: ServerRow): Pr
     }
   }
 
-  if (container && !imageFromDocker && SAFE_CONTAINER.test(container)) {
-    const imgR = await execRemote(
-      auth,
-      `docker inspect ${shellQuote(container)} --format '{{.Config.Image}}' 2>/dev/null`,
-    );
-    if (imgR.code === 0) imageFromDocker = imgR.stdout.trim();
+  if (container && !imageFromDocker) {
+    imageFromDocker = (await inspectContainerImage(auth, container)) ?? "";
   }
 
   const candidates: string[] = [];
@@ -362,18 +424,20 @@ export async function discoverComposeOnReferenceServer(reference: ServerRow): Pr
 
   const awgDir =
     awgFromMount ?? found.awgDirs[0] ?? (await discoverAwgDirFromKnownConf(auth, preferIface));
-  if (awgDir && container && imageFromDocker && SAFE_CONTAINER.test(container)) {
-    return synthesizeFromHost(container, awgDir, imageFromDocker);
+  if (imageFromDocker) {
+    const hostAwgDir = awgDir ?? PROVISION_AWG_DIR;
+    return synthesizeForNewProvision(imageFromDocker, PROVISION_CONTAINER_NAME, hostAwgDir);
   }
 
-  if (awgDir && imageFromDocker) {
-    const name = container && SAFE_CONTAINER.test(container) ? container : "amnezia-awg";
-    return synthesizeFromHost(name, awgDir, imageFromDocker);
+  const resolved = await resolveReferenceContainer(auth, reference);
+  if (resolved) {
+    const hostAwgDir = awgDir ?? PROVISION_AWG_DIR;
+    return synthesizeForNewProvision(resolved.image, PROVISION_CONTAINER_NAME, hostAwgDir);
   }
 
   const hint = container
-    ? `Контейнер в панели: ${container}. awg-каталог: ${awgDir ?? "не найден"}.`
-    : "В панели не найден рабочий AWG-контейнер (docker ps).";
+    ? `Контейнер «${container}» в панели не найден на образце (docker inspect). awg на хосте: ${awgDir ?? "нет — конфиг, возможно, только внутри контейнера"}.`
+    : "На образце нет контейнера AWG (docker ps -a).";
   throw new Error(
     `Не найден docker-compose.yml на образце. Пробовали: ${candidates.slice(0, 12).join(", ")}${candidates.length > 12 ? "…" : ""}. ${hint}`,
   );
