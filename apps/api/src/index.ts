@@ -9,6 +9,7 @@ import { ensureBootstrapAdmin } from "./bootstrap.js";
 import { authRoutes } from "./routes/auth.js";
 import { serverRoutes } from "./routes/servers.js";
 import { clientRoutes } from "./routes/clients.js";
+import { statsRoutes } from "./routes/stats.js";
 
 ensureDatabaseDir();
 getDb();
@@ -46,6 +47,7 @@ await app.register(async (scope) => {
   await scope.register(authRoutes);
   await scope.register(serverRoutes);
   await scope.register(clientRoutes);
+  await scope.register(statsRoutes);
 }, { prefix: "/api" });
 
 app.get("/", async () => ({

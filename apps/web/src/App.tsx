@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { VpnProtocol } from "@amnesia-veb/shared";
 import { api, getToken, setToken } from "./api.js";
+import { HostStatsGauges } from "./HostStatsGauges.js";
 
 type Me = { id: string; username: string; created_at: string };
 type VlessReality = {
@@ -187,6 +188,7 @@ export function App() {
             Развернуть Amnezia на VPS
           </button>
         </div>
+        <HostStatsGauges apiPath="/api/host/stats" />
         {serverAddMode === "manual" ? (
           <ServerForm
             onCreated={async () => {
@@ -281,6 +283,9 @@ export function App() {
               ))}
             </select>
           </div>
+          {activeServerId ? (
+            <HostStatsGauges apiPath={`/api/servers/${activeServerId}/stats`} />
+          ) : null}
           {activeServer ? (
             <>
               <ClientForm

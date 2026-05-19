@@ -24,6 +24,16 @@ export const config = {
   bootstrapPassword: (process.env.PANEL_BOOTSTRAP_PASSWORD ?? "").trim(),
   allowRegister: process.env.ALLOW_REGISTER === "true",
   trustProxy: process.env.TRUST_PROXY === "true",
+  /** SSH на хост с панелью (VPS), если панель в Docker. Иначе PANEL_STATS_SERVER_ID. */
+  panelStatsServerId: (process.env.PANEL_STATS_SERVER_ID ?? "").trim(),
+  panelHostSsh: {
+    host: (process.env.PANEL_HOST_SSH_HOST ?? "").trim(),
+    port: Number(process.env.PANEL_HOST_SSH_PORT ?? "22"),
+    user: (process.env.PANEL_HOST_SSH_USER ?? "root").trim(),
+    privateKey: (process.env.PANEL_HOST_SSH_PRIVATE_KEY ?? "").trim(),
+    privateKeyPath: (process.env.PANEL_HOST_SSH_PRIVATE_KEY_FILE ?? "").trim(),
+    password: (process.env.PANEL_HOST_SSH_PASSWORD ?? "").trim(),
+  },
 };
 
 export function ensureDatabaseDir(): void {
