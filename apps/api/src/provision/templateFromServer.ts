@@ -2,6 +2,7 @@ import type { ServerRow } from "../drivers/types.js";
 import { execRemote, shellQuote } from "../ssh/client.js";
 import { buildSshAuthFromServer } from "../ssh/buildAuth.js";
 import { discoverComposeOnReferenceServer } from "./discoverHostLayout.js";
+import { normalizeProvisionComposeYaml } from "./dockerImage.js";
 import { type AwgHostLayout, parseAwgLayoutFromCompose } from "./layout.js";
 import { buildPanelWgNatScript } from "./panelNatScript.js";
 import { PANEL_WG_NAT_SCRIPT_BASENAME } from "./panelNatScript.js";
@@ -21,7 +22,9 @@ export type AwgDeployBundle = {
  */
 export async function fetchAwgDeployBundleFromServer(reference: ServerRow): Promise<AwgDeployBundle> {
   const auth = buildSshAuthFromServer(reference);
-  const { composePath, composeYaml, awgDir } = await discoverComposeOnReferenceServer(reference);
+  const { composePath, composeYaml: rawCompose, awgDir } = await discoverComposeOnReferenceServer(reference);
+  const containerHint = reference.docker_wg_container?.trim() || undefined;
+  const composeYaml = normalizeProvisionComposeYaml(rawCompose, { containerName: containerHint });
   const layout = parseAwgLayoutFromCompose(composeYaml, {
     composePath,
     containerName: reference.docker_wg_container?.trim() || undefined,

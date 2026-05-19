@@ -1,5 +1,9 @@
 import { AMNEZIA_WG_IMAGE } from "./compose.js";
+import { extractImageFromCompose } from "./layout.js";
 import { execRemote, shellQuote, type SshAuth } from "../ssh/client.js";
+
+/** Локальные/служебные теги Docker, не существующие на Hub. */
+const NON_PULLABLE_IMAGE = /^(?:amnezia-awg\d*|amnezia-wireguard|amnezia-wg)(?::.*)?$/i;
 
 /**
  * Образ для `docker pull` на новом VPS: локальные теги вроде `amnezia-awg2` (имя контейнера) не тянутся с Hub.
@@ -11,10 +15,22 @@ export function resolvePullableDockerImage(
   const t = (raw ?? "").trim();
   if (!t) return AMNEZIA_WG_IMAGE;
   if (opts?.containerName && t === opts.containerName) return AMNEZIA_WG_IMAGE;
+  if (NON_PULLABLE_IMAGE.test(t)) return AMNEZIA_WG_IMAGE;
   if (t.startsWith("sha256:")) return t;
   if (t.includes("@sha256:")) return t;
   if (!t.includes("/")) return AMNEZIA_WG_IMAGE;
   return t;
+}
+
+/** Подменяет `image:` в compose на образ, который можно pull с Hub. */
+export function normalizeProvisionComposeYaml(
+  composeYaml: string,
+  opts?: { containerName?: string; preferImage?: string },
+): string {
+  const current = extractImageFromCompose(composeYaml);
+  const pullImage = resolvePullableDockerImage(opts?.preferImage ?? current, opts);
+  if (current === pullImage) return composeYaml;
+  return composeYaml.replace(/^(\s+image:\s*)\S+\s*$/m, `$1${pullImage}`);
 }
 
 /** Образ контейнера: RepoDigest → Config.Image → image inspect по ID. */

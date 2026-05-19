@@ -9,7 +9,11 @@ import {
   PROVISION_COMPOSE_PATH,
   PROVISION_CONTAINER_NAME,
 } from "./compose.js";
-import { inspectPullableContainerImage, resolvePullableDockerImage } from "./dockerImage.js";
+import {
+  inspectPullableContainerImage,
+  normalizeProvisionComposeYaml,
+  resolvePullableDockerImage,
+} from "./dockerImage.js";
 import { assertSafeContainerName, assertSafeHostPath } from "./layout.js";
 
 const DEFAULT_COMPOSE_CANDIDATES = [
@@ -418,7 +422,10 @@ export async function discoverComposeOnReferenceServer(reference: ServerRow): Pr
     const yaml = await tryReadCompose(auth, safeCompose);
     if (yaml) {
       const awgDir = awgFromMount ?? found.awgDirs[0] ?? PROVISION_AWG_DIR;
-      return { composePath: safeCompose, composeYaml: yaml, awgDir };
+      const composeYaml = normalizeProvisionComposeYaml(yaml, {
+        containerName: container || reference.docker_wg_container?.trim(),
+      });
+      return { composePath: safeCompose, composeYaml, awgDir };
     }
   }
 

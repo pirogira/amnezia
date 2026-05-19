@@ -86,10 +86,13 @@ export async function stepPrepareNewServerHost(
     return { ok: false, message: "Некорректный listenPort" };
   }
   const port = String(listenPort);
-  const image = resolvePullableDockerImage(
-    (composeYaml && extractImageFromCompose(composeYaml)) || AMNEZIA_WG_IMAGE,
-    { containerName: layout.containerName },
-  );
+  const rawExtracted =
+    (composeYaml && extractImageFromCompose(composeYaml)) || AMNEZIA_WG_IMAGE;
+  const image = resolvePullableDockerImage(rawExtracted, {
+    containerName: layout.containerName,
+  });
+  const pullImage =
+    image.includes("/") || image.includes("@sha256:") ? image : AMNEZIA_WG_IMAGE;
   const script = `set -euo pipefail
 if [ -f ${shellQuote(layout.composePath)} ]; then
   docker compose -f ${shellQuote(layout.composePath)} down --remove-orphans 2>/dev/null || true
@@ -97,7 +100,7 @@ fi
 for c in ${layout.containerName} amnezia-wireguard amnezia-awg2 amnezia-awg; do
   docker rm -f "$c" 2>/dev/null || true
 done
-docker pull ${shellQuote(image)}
+docker pull ${shellQuote(pullImage)}
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qiE 'Status: active|статус: активен'; then
   ufw allow ${port}/udp comment 'amnesia-veb awg' >/dev/null 2>&1 || ufw allow ${port}/udp >/dev/null 2>&1 || true
 fi
