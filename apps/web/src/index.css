@@ -113,6 +113,19 @@ button {
   margin-bottom: 0.5rem;
 }
 
+.panel-host-card .h2 {
+  margin-bottom: 0.35rem;
+}
+
+.panel-host-card-desc {
+  margin: 0 0 0.25rem;
+  font-size: 0.88rem;
+}
+
+.panel-host-card .stats-gauges-row {
+  margin-bottom: 0;
+}
+
 .active-server-block {
   display: flex;
   flex-direction: column;

@@ -170,6 +170,14 @@ export function App() {
         </div>
       </div>
 
+      <div className="card panel-host-card">
+        <h2 className="h2">Хост панели</h2>
+        <p className="muted panel-host-card-desc">
+          Загрузка VPS, на котором работает эта панель (обновление каждые 45 с)
+        </p>
+        <HostStatsGauges apiPath="/api/host/stats" />
+      </div>
+
       <div className="card">
         <h2 className="h2">Серверы</h2>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -188,7 +196,6 @@ export function App() {
             Развернуть Amnezia на VPS
           </button>
         </div>
-        <HostStatsGauges apiPath="/api/host/stats" />
         {serverAddMode === "manual" ? (
           <ServerForm
             onCreated={async () => {
