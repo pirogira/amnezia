@@ -11,26 +11,23 @@ export const PROVISION_AWG_DIR = "/opt/amnezia/awg";
 export const PROVISION_AWG_CONF = `${PROVISION_AWG_DIR}/awg0.conf`;
 export const PROVISION_CONTAINER_NAME = "amnezia-awg";
 
-export function buildProvisionComposeYaml(): string {
-  /**
-   * `network_mode: host` — интерфейс awg0 и выход в интернет в одном netns с VPS; иначе NAT в
-   * bridge-контейнере часто не даёт клиентам реальный выход в сеть.
-   * После `*-quick up` нужен долгоживущий PID 1: `wg-quick` сразу завершается — без `tail`
-   * контейнер выходит; `trap` на SIGTERM/SIGINT вызывает `*-quick down`, чтобы не оставлять
-   * правила iptables на хосте.
-   * Не задавать sysctls здесь: при network_mode: host runc отклоняет net.ipv4.ip_forward.
-   * Включение forwarding на VPS делает stepEnableIpv4Forward до compose up.
-   * `pid: host` — PID 1 это init хоста; panel-nat.sh вызывает iptables через `nsenter -t 1 -m`
-   * (mount-ns хоста), иначе бинарь из образа пишет в nft, а Docker — в legacy.
-   * `privileged: true` — иначе на Ubuntu Docker часто `Permission denied` на `/proc/1/ns/mnt`
-   * (AppArmor/политика), даже при CAP_SYS_ADMIN.
-   */
-  /** Два mount: явный путь `/etc/wireguard/…` и путь amneziawg-tools для `awg-quick up awg0` → `/etc/amnezia/amneziawg/awg0.conf`. */
+/**
+ * `network_mode: host` — интерфейс awg0 и выход в интернет в одном netns с VPS.
+ * `pid: host` + panel-nat.sh через nsenter — iptables в legacy на хосте.
+ */
+export function buildProvisionComposeYamlForHost(opts: {
+  awgDir: string;
+  containerName: string;
+  image?: string;
+}): string {
+  const image = opts.image?.trim() || AMNEZIA_WG_IMAGE;
+  const awgDir = opts.awgDir;
+  const containerName = opts.containerName;
   const awgConfInContainer = "/etc/wireguard/awg0.conf";
   return `services:
-  ${PROVISION_CONTAINER_NAME}:
-    image: ${AMNEZIA_WG_IMAGE}
-    container_name: ${PROVISION_CONTAINER_NAME}
+  ${containerName}:
+    image: ${image}
+    container_name: ${containerName}
     network_mode: host
     pid: host
     privileged: true
@@ -39,12 +36,19 @@ export function buildProvisionComposeYaml(): string {
     devices:
       - /dev/net/tun
     volumes:
-      - ${PROVISION_AWG_DIR}:/etc/wireguard
-      - ${PROVISION_AWG_DIR}:/etc/amnezia/amneziawg
+      - ${awgDir}:/etc/wireguard
+      - ${awgDir}:/etc/amnezia/amneziawg
     command:
       - /bin/sh
       - -c
       - "trap 'wg-quick down ${awgConfInContainer} 2>/dev/null; awg-quick down ${awgConfInContainer} 2>/dev/null; exit 0' TERM INT; if command -v awg-quick >/dev/null 2>&1; then awg-quick up ${awgConfInContainer}; else wg-quick up ${awgConfInContainer}; fi; tail -f /dev/null"
     restart: unless-stopped
 `;
+}
+
+export function buildProvisionComposeYaml(): string {
+  return buildProvisionComposeYamlForHost({
+    awgDir: PROVISION_AWG_DIR,
+    containerName: PROVISION_CONTAINER_NAME,
+  });
 }
