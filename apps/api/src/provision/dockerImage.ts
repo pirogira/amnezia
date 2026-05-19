@@ -29,8 +29,17 @@ export function normalizeProvisionComposeYaml(
 ): string {
   const current = extractImageFromCompose(composeYaml);
   const pullImage = resolvePullableDockerImage(opts?.preferImage ?? current, opts);
-  if (current === pullImage) return composeYaml;
-  return composeYaml.replace(/^(\s+image:\s*)\S+\s*$/m, `$1${pullImage}`);
+  let out = composeYaml.replace(
+    /^(\s*image:\s*)(["']?)([^\s"'#]+)\2\s*$/gm,
+    `$1${pullImage}`,
+  );
+  if (!out.includes(pullImage)) {
+    out = composeYaml.replace(
+      /^(\s*image:\s*).+$/gm,
+      `$1${pullImage}`,
+    );
+  }
+  return out;
 }
 
 /** Образ контейнера: RepoDigest → Config.Image → image inspect по ID. */

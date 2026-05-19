@@ -7,8 +7,7 @@ import {
   shellQuote,
 } from "../ssh/client.js";
 import type { SshAuth } from "../ssh/client.js";
-import { AMNEZIA_WG_IMAGE } from "./compose.js";
-import { normalizeProvisionComposeYaml } from "./dockerImage.js";
+import { AMNEZIA_WG_IMAGE, buildTargetHostComposeYaml } from "./compose.js";
 import { type AwgHostLayout, DEFAULT_AWG_LAYOUT } from "./layout.js";
 import { PANEL_WG_NAT_SCRIPT_BASENAME } from "./panelNatScript.js";
 
@@ -120,15 +119,13 @@ grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf 2>/dev/null || echo 'net.ipv4.
 
 export async function stepWriteProvisionFiles(
   auth: SshAuth,
-  composeYaml: string,
+  _composeYaml: string,
   awg0Conf: string,
   natScript: string,
   layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
 ): Promise<StepResult> {
-  const normalizedCompose = normalizeProvisionComposeYaml(composeYaml, {
-    containerName: layout.containerName,
-  });
-  const b64Compose = Buffer.from(normalizedCompose, "utf8").toString("base64");
+  const composeToWrite = buildTargetHostComposeYaml(layout);
+  const b64Compose = Buffer.from(composeToWrite, "utf8").toString("base64");
   const b64Conf = Buffer.from(awg0Conf, "utf8").toString("base64");
   const b64Nat = Buffer.from(natScript, "utf8").toString("base64");
   const natHostPath = `${layout.awgDir}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
@@ -156,7 +153,7 @@ export async function stepDockerComposeUp(
   const flags = opts?.forceRecreate ? " --force-recreate" : "";
   const r = await execRemote(
     auth,
-    `docker compose -f ${shellQuote(layout.composePath)} up -d${flags}`,
+    `docker compose -f ${shellQuote(layout.composePath)} up -d --pull never${flags}`,
   );
   if (r.code !== 0) {
     return { ok: false, message: `docker compose up: ${trimCmdOut(r.stderr || r.stdout)}` };
@@ -167,14 +164,12 @@ export async function stepDockerComposeUp(
 /** Только compose + panel-nat (без awg0.conf) — при повторном провижне с уже существующим контейнером. */
 export async function stepWriteProvisionSidecars(
   auth: SshAuth,
-  composeYaml: string,
+  _composeYaml: string,
   natScript: string,
   layout: AwgHostLayout = DEFAULT_AWG_LAYOUT,
 ): Promise<StepResult> {
-  const normalizedCompose = normalizeProvisionComposeYaml(composeYaml, {
-    containerName: layout.containerName,
-  });
-  const b64Compose = Buffer.from(normalizedCompose, "utf8").toString("base64");
+  const composeToWrite = buildTargetHostComposeYaml(layout);
+  const b64Compose = Buffer.from(composeToWrite, "utf8").toString("base64");
   const b64Nat = Buffer.from(natScript, "utf8").toString("base64");
   const natHostPath = `${layout.awgDir}/${PANEL_WG_NAT_SCRIPT_BASENAME}`;
   const script = `set -euo pipefail

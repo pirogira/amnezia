@@ -52,3 +52,15 @@ export function buildProvisionComposeYaml(): string {
     containerName: PROVISION_CONTAINER_NAME,
   });
 }
+
+/** Compose для записи на целевой VPS (всегда Hub-образ панели, без локальных тегов образца). */
+export function buildTargetHostComposeYaml(layout: {
+  awgDir: string;
+  containerName: string;
+}): string {
+  return buildProvisionComposeYamlForHost({
+    awgDir: layout.awgDir,
+    containerName: layout.containerName,
+    image: AMNEZIA_WG_IMAGE,
+  });
+}
